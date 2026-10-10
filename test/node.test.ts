@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { decodeChunk, encodeMicroVideo, encodeVideo, probe, readHeader } from '../src/node.js';
+import { decodeChunk, encodeMicroVideo, encodeVideo, probe, readHeader, serve, StreamReader } from '../src/node.js';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const dir = mkdtempSync(join(tmpdir(), 'glyphcast-'));
@@ -18,9 +18,9 @@ describe.runIf(hasFfmpeg)('ffmpeg encoders', () => {
     const bytes = await encodeVideo(clip, { cols: 64, fps: 10, chunkSeconds: 1 });
     const header = readHeader(bytes);
     expect(header).toMatchObject({ cols: 64, rows: 22, fps: 10, frameCount: 20, chunkFrames: 10 });
-    const first = header.chunks[0];
+    const first = new StreamReader().push(bytes)[0];
     if (!first) throw new Error('no chunks');
-    const frames = await decodeChunk(header, bytes.subarray(first.offset, first.offset + first.size));
+    const frames = await decodeChunk(header, first.data);
     expect(frames).toHaveLength(10);
     expect(frames[0]?.some((value, index) => index % 4 !== 3 && value > 100)).toBe(true);
   });
@@ -29,5 +29,25 @@ describe.runIf(hasFfmpeg)('ffmpeg encoders', () => {
     const out = join(dir, 'micro.mp4');
     expect(await encodeMicroVideo(clip, out, { cols: 64, audio: false })).toEqual({ cols: 64, rows: 22 });
     expect(await probe(out)).toMatchObject({ width: 64, height: 22 });
+  });
+
+  it('serves live streams, audio, info and files from a folder', async () => {
+    const server = await serve({ port: 0, dir, youtube: false });
+    const address = server.address();
+    const base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+    try {
+      expect(await (await fetch(`${base}/info?file=clip.mp4`)).json()).toMatchObject({ title: 'clip.mp4', duration: 2 });
+      const reader = new StreamReader();
+      const chunks = reader.push(new Uint8Array(await (await fetch(`${base}/stream?file=clip.mp4&cols=32&fps=10&start=1`)).arrayBuffer()));
+      expect(reader.info).toMatchObject({ cols: 32, rows: 11, fps: 10, frameCount: 10 });
+      expect(chunks.reduce((sum, chunk) => sum + chunk.frames, 0)).toBe(10);
+      const range = await fetch(`${base}/files/clip.mp4`, { headers: { range: 'bytes=0-9' } });
+      expect(range.status).toBe(206);
+      expect((await range.arrayBuffer()).byteLength).toBe(10);
+      expect((await fetch(`${base}/files/..%2Fsecret`)).status).toBe(400);
+      expect((await fetch(`${base}/stream?url=https://youtu.be/x`)).status).toBe(400);
+    } finally {
+      server.close();
+    }
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeChunk, Encoder, GlyphcastError, readHeader } from '../src/format.js';
+import { decodeChunk, Encoder, GlyphcastError, readHeader, StreamReader, type Chunk } from '../src/format.js';
 import { autoLevels, glyphIndex, luma, NEUTRAL } from '../src/levels.js';
 
 const cols = 12;
@@ -15,10 +15,12 @@ const frame = (seed: number): Uint8Array => {
   return pixels;
 };
 
+const split = (bytes: Uint8Array): Chunk[] => new StreamReader().push(bytes);
+
 const decodeAll = async (bytes: Uint8Array): Promise<Uint8ClampedArray[]> => {
   const header = readHeader(bytes);
   const frames: Uint8ClampedArray[] = [];
-  for (const chunk of header.chunks) frames.push(...(await decodeChunk(header, bytes.subarray(chunk.offset, chunk.offset + chunk.size))));
+  for (const chunk of split(bytes)) frames.push(...(await decodeChunk(header, chunk.data)));
   return frames;
 };
 
@@ -40,7 +42,7 @@ describe('.gcast format', () => {
     const bytes = await encoder.finish();
     const header = readHeader(bytes);
     expect(header).toMatchObject({ cols, rows, fps: 24, frameCount: 10, chunkFrames: 4 });
-    expect(header.chunks).toHaveLength(3);
+    expect(split(bytes).map((chunk) => [chunk.start, chunk.frames])).toEqual([[0, 4], [4, 4], [8, 2]]);
     const frames = await decodeAll(bytes);
     expect(frames).toHaveLength(10);
     frames.forEach((decoded, index) => expect(close(decoded, source[index] ?? new Uint8Array(), 15)).toBe(true));
@@ -64,10 +66,30 @@ describe('.gcast format', () => {
     for (let index = 0; index < 5; index += 1) encoder.add(rgba);
     const bytes = await encoder.finish();
     const header = readHeader(bytes);
-    const last = header.chunks[2];
+    const last = split(bytes)[2];
     if (!last) throw new Error('missing chunk');
-    const [only] = await decodeChunk(header, bytes.subarray(last.offset, last.offset + last.size));
+    const [only] = await decodeChunk(header, last.data);
     expect(only?.[0]).toBe(204);
+  });
+
+  it('streams chunks as they are produced and reads them back from arbitrary slices', async () => {
+    const live: Uint8Array[] = [];
+    const encoder = new Encoder({ cols, rows, fps: 30, chunkFrames: 3 }, (bytes) => live.push(bytes));
+    for (let index = 0; index < 7; index += 1) encoder.add(frame(index));
+    await encoder.drain();
+    expect(live.length).toBe(3);
+    await encoder.finish();
+    const joined = new Uint8Array(live.reduce((sum, part) => sum + part.length, 0));
+    let at = 0;
+    for (const part of live) {
+      joined.set(part, at);
+      at += part.length;
+    }
+    expect(readHeader(joined).frameCount).toBe(0);
+    const reader = new StreamReader();
+    const got: Chunk[] = [];
+    for (let offset = 0; offset < joined.length; offset += 7) got.push(...reader.push(joined.subarray(offset, offset + 7)));
+    expect(got.map((chunk) => chunk.frames)).toEqual([3, 3, 1]);
   });
 
   it('rejects broken input', async () => {

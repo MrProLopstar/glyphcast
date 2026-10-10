@@ -77,7 +77,8 @@ const compile = (gl: WebGL2RenderingContext, type: number, source: string): WebG
  * the glyph by brightness and paints it in the cell's color, so a 180-column frame is a single draw call.
  */
 export class GlyphRenderer {
-  readonly glyphs: string;
+  glyphs: string;
+  private readonly font: string;
   readonly cellWidth: number;
   readonly cellHeight: number;
   private readonly gl: WebGL2RenderingContext;
@@ -89,6 +90,7 @@ export class GlyphRenderer {
   constructor(readonly canvas: HTMLCanvasElement | OffscreenCanvas, options: RendererOptions = {}) {
     this.glyphs = options.glyphs ?? DEFAULT_GLYPHS;
     if ([...this.glyphs].length < 2) throw new Error('At least two glyphs are needed');
+    this.font = options.font ?? 'ui-monospace, "SFMono-Regular", Consolas, "DejaVu Sans Mono", monospace';
     const size = Math.round(options.glyphSize ?? 16);
     this.cellHeight = size;
     this.cellWidth = Math.max(2, Math.round(size * 0.6));
@@ -116,11 +118,10 @@ export class GlyphRenderer {
 
     this.cellsTexture = this.texture(0);
     this.texture(1);
-    this.uploadAtlas(options.font ?? 'ui-monospace, "SFMono-Regular", Consolas, "DejaVu Sans Mono", monospace');
     gl.uniform1i(this.uniforms['cells'] ?? null, 0);
     gl.uniform1i(this.uniforms['atlas'] ?? null, 1);
-    gl.uniform1f(this.uniforms['glyphs'] ?? null, [...this.glyphs].length);
-    gl.uniform3fv(this.uniforms['background'] ?? null, hex(options.background ?? '#05070a'));
+    this.setGlyphs(this.glyphs);
+    this.setBackground(options.background ?? '#05070a');
   }
 
   private texture(unit: number): WebGLTexture {
@@ -135,8 +136,12 @@ export class GlyphRenderer {
     return texture;
   }
 
-  private uploadAtlas(font: string): void {
-    const list = [...this.glyphs];
+  /** Switches the glyph set, from dark to bright. */
+  setGlyphs(glyphs: string): void {
+    const list = [...glyphs];
+    if (list.length < 2) throw new Error('At least two glyphs are needed');
+    this.glyphs = glyphs;
+    const font = this.font;
     const atlas = new OffscreenCanvas(this.cellWidth * list.length, this.cellHeight);
     const context = atlas.getContext('2d');
     if (!context) throw new Error('Cannot draw the glyph atlas');
@@ -148,6 +153,12 @@ export class GlyphRenderer {
     const { gl } = this;
     gl.activeTexture(gl.TEXTURE1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas);
+    gl.uniform1f(this.uniforms['glyphs'] ?? null, list.length);
+  }
+
+  /** Sets the background color, CSS hex. */
+  setBackground(color: string): void {
+    this.gl.uniform3fv(this.uniforms['background'] ?? null, hex(color));
   }
 
   /** Canvas size in pixels for a grid, so each cell gets a full glyph. */

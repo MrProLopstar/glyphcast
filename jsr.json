@@ -1,9 +1,10 @@
 {
   "name": "@mrprolopstar/glyphcast",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts",
+    "./element": "./src/element.ts",
     "./node": "./src/node.ts"
   },
   "publish": {

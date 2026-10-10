@@ -1,7 +1,7 @@
 {
   "name": "glyphcast",
-  "version": "0.1.0",
-  "description": "Video as colored glyphs in the browser with WebGL2, plus a compact glyph stream format a server can send instead of video",
+  "version": "0.2.0",
+  "description": "Video as colored glyphs: a complete WebGL2 player with controls and PiP, and a glyph stream a server can send instead of video",
   "keywords": [
     "ascii",
     "ascii-art",
@@ -17,7 +17,9 @@
   "license": "MIT",
   "author": "MrProLopstar",
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/element.js"
+  ],
   "engines": {
     "node": ">=18"
   },
@@ -25,6 +27,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./element": {
+      "types": "./dist/element.d.ts",
+      "import": "./dist/element.js"
     },
     "./node": {
       "types": "./dist/node.d.ts",

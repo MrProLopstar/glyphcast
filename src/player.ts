@@ -1,271 +1,475 @@
-import { decodeChunk, GlyphcastError, readHeader, type Header } from './format.js';
+import { decodeChunk, GlyphcastError, StreamReader, type Chunk, type StreamInfo } from './format.js';
 import { autoLevels, ease, NEUTRAL, type Levels } from './levels.js';
-import { GlyphRenderer, type FrameStyle, type RendererOptions } from './renderer.js';
+import { DEFAULT_GLYPHS, GlyphRenderer } from './renderer.js';
 
-export interface PlaybackOptions extends RendererOptions {
+export interface LookOptions {
+  /** Grid width in glyphs for video sources; `.gcast` streams carry their own grid. Default 160. */
+  readonly cols?: number;
+  /** Glyphs from dark to bright. Default `' .:-=+*#%@'`. */
+  readonly glyphs?: string;
+  /** Saturation multiplier: 0 is grayscale. Default 1.3. */
+  readonly boost?: number;
+  /** One color for every glyph, CSS hex, or null for the frame colors. */
+  readonly tint?: string | null;
   /** Adjust brightness and contrast to each scene. Default true. */
   readonly autoLevels?: boolean;
-  /** Saturation multiplier. Default 1.3. */
-  readonly boost?: number;
-  /** Paint every glyph in one color, CSS hex. */
-  readonly tint?: string | null;
+  /** Background color, CSS hex. Default `#05070a`. */
+  readonly background?: string;
 }
 
-export interface VideoOptions extends PlaybackOptions {
-  /** Grid width in glyphs. Default 160. */
-  readonly cols?: number;
-  /** Upper limit for redraws per second. Default 60. */
-  readonly fps?: number;
-  /** The video is already at grid size, one pixel per glyph (see `encodeMicroVideo`). Default false. */
-  readonly prescaled?: boolean;
+export interface PlayerOptions extends LookOptions {
+  /** Glyph height in device pixels. Default 16. */
+  readonly glyphSize?: number;
+  /** CSS font stack for glyphs. */
+  readonly font?: string;
 }
 
-type FrameCallbackVideo = HTMLVideoElement & { requestVideoFrameCallback?: (callback: () => void) => number; cancelVideoFrameCallback?: (handle: number) => void };
+/** Where frames come from. */
+export type Source =
+  | {
+      readonly type: 'video';
+      /** URL, file or camera stream. */
+      readonly src: string | Blob | MediaStream;
+      /** The video is already at grid size, one pixel per glyph. */
+      readonly prescaled?: boolean;
+    }
+  | {
+      readonly type: 'gcast';
+      /** URL of a `.gcast` file or a live server stream. */
+      readonly src: string;
+      /** Audio that plays along and drives the clock. */
+      readonly audio?: string;
+      /** Known duration in seconds for live streams whose header does not carry a frame count. */
+      readonly duration?: number;
+      /** Builds URLs that start at a given second, for server streams that cannot be seeked by downloading ahead. */
+      readonly restart?: (seconds: number) => { readonly src: string; readonly audio?: string };
+    };
 
-abstract class Playback {
-  protected readonly renderer: GlyphRenderer;
-  protected levels: Levels = NEUTRAL;
-  protected style: PlaybackOptions;
+/** Picks the source type from a URL: `.gcast` files are streams, everything else is video. */
+export const sourceFor = (src: string, audio?: string): Source =>
+  /\.gcast(?:$|[?#])/i.test(src) ? { type: 'gcast', src, ...(audio ? { audio } : {}) } : { type: 'video', src };
 
-  constructor(canvas: HTMLCanvasElement, options: PlaybackOptions) {
-    this.renderer = new GlyphRenderer(canvas, options);
-    this.style = options;
-  }
+type FrameVideo = HTMLVideoElement & { requestVideoFrameCallback?: (callback: () => void) => number };
 
-  /** Changes `autoLevels`, `boost` or `tint` on the fly. */
-  configure(options: Pick<PlaybackOptions, 'autoLevels' | 'boost' | 'tint'>): void {
-    this.style = { ...this.style, ...options };
-  }
-
-  protected paint(pixels: Uint8ClampedArray, cols: number, rows: number): void {
-    this.levels = this.style.autoLevels === false ? NEUTRAL : ease(this.levels, autoLevels(pixels));
-    const style: FrameStyle = { levels: this.levels, boost: this.style.boost ?? 1.3, tint: this.style.tint ?? null };
-    this.renderer.draw(pixels, cols, rows, style);
-  }
+interface StreamState {
+  readonly source: Extract<Source, { type: 'gcast' }>;
+  readonly reader: StreamReader;
+  readonly chunks: Chunk[];
+  readonly decoded: Map<number, Promise<Uint8ClampedArray[]>>;
+  readonly abort: AbortController;
+  /** Second at which this download starts (non-zero after a server restart). */
+  readonly offset: number;
+  done: boolean;
+  clockStart: number;
+  clockAt: number;
 }
 
 /**
- * Plays any `<video>` as glyphs: the video keeps its sound, controls and seeking, the canvas shows its frames
- * redrawn as colored characters. Cross-origin videos need CORS (`crossorigin="anonymous"`), otherwise the browser
- * does not let the page read their pixels.
+ * A glyph player without UI: give it a canvas and a source, call `play()`. It plays videos, cameras and `.gcast`
+ * streams with the same API as a media element (`play`, `pause`, `currentTime`, `duration`, `volume`, `muted`,
+ * `playbackRate`) and the same events (`play`, `pause`, `timeupdate`, `durationchange`, `progress`, `ended`,
+ * `waiting`, `playing`, `error`, `loadedmetadata`).
  */
-export class GlyphVideo extends Playback {
+export class GlyphPlayer extends EventTarget {
+  readonly renderer: GlyphRenderer;
+  /** The media element that holds video and audio. Hidden; the canvas shows the picture. */
+  readonly media: HTMLVideoElement;
+  private look: Required<Omit<LookOptions, 'tint'>> & { tint: string | null };
+  private source: Source | null = null;
+  private stream: StreamState | null = null;
+  private levels: Levels = NEUTRAL;
   private readonly sampler: OffscreenCanvasRenderingContext2D;
-  private cols: number;
-  private handle: number | null = null;
-  private last = 0;
+  private loop: number | null = null;
+  private shownFrame = -1;
+  private lastFrame: { pixels: Uint8ClampedArray; cols: number; rows: number } | null = null;
+  private rate = 1;
+  private ended = false;
+  private mediaClock = false;
 
-  constructor(readonly video: HTMLVideoElement, canvas: HTMLCanvasElement, private options: VideoOptions = {}) {
-    super(canvas, options);
-    this.cols = options.cols ?? 160;
+  constructor(readonly canvas: HTMLCanvasElement, options: PlayerOptions = {}) {
+    super();
+    this.look = {
+      cols: options.cols ?? 160,
+      glyphs: options.glyphs ?? DEFAULT_GLYPHS,
+      boost: options.boost ?? 1.3,
+      tint: options.tint ?? null,
+      autoLevels: options.autoLevels ?? true,
+      background: options.background ?? '#05070a',
+    };
+    this.renderer = new GlyphRenderer(canvas, { glyphs: this.look.glyphs, background: this.look.background, ...(options.glyphSize ? { glyphSize: options.glyphSize } : {}), ...(options.font ? { font: options.font } : {}) });
     const context = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error('Cannot create a 2D context for sampling');
+    if (!context) throw new GlyphcastError('Cannot create a 2D context for sampling');
     this.sampler = context;
+    this.media = document.createElement('video');
+    this.media.playsInline = true;
+    this.media.preload = 'auto';
+    for (const type of ['play', 'pause', 'volumechange', 'ratechange', 'waiting', 'playing', 'loadedmetadata', 'durationchange', 'progress']) {
+      this.media.addEventListener(type, () => {
+        if (this.stream && ['durationchange', 'loadedmetadata', 'progress'].includes(type)) return;
+        this.emit(type);
+      });
+    }
+    this.media.addEventListener('ended', () => {
+      if (!this.stream) this.finish();
+    });
+    this.media.addEventListener('seeked', () => this.draw());
+    this.media.addEventListener('loadeddata', () => this.draw());
+    this.media.addEventListener('error', () => this.fail(new GlyphcastError(this.media.error?.message || 'The media cannot be played')));
   }
 
-  /** Grid size for the current video, keeping its aspect ratio with glyph proportions. */
+  private emit(type: string, detail?: unknown): void {
+    this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  private fail(error: Error): void {
+    this.emit('error', error);
+  }
+
+  /** Type of the loaded source, or null. */
+  get sourceType(): Source['type'] | null {
+    return this.source?.type ?? null;
+  }
+
+  /** Current look. */
+  get options(): Readonly<LookOptions> {
+    return this.look;
+  }
+
+  /** Changes the look on the fly: grid width, glyphs, colors, levels. */
+  configure(options: LookOptions): void {
+    const glyphs = options.glyphs !== undefined && options.glyphs !== this.look.glyphs;
+    const background = options.background !== undefined && options.background !== this.look.background;
+    this.look = { ...this.look, ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) };
+    if (glyphs) this.renderer.setGlyphs(this.look.glyphs);
+    if (background) this.renderer.setBackground(this.look.background);
+    this.shownFrame = -1;
+    if (this.lastFrame && this.stream) this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
+    else this.draw();
+  }
+
+  /** Grid of the current source. */
   grid(): { readonly cols: number; readonly rows: number } {
-    if (this.options.prescaled && this.video.videoWidth > 0) return { cols: this.video.videoWidth, rows: this.video.videoHeight };
-    const aspect = this.video.videoWidth > 0 ? this.video.videoHeight / this.video.videoWidth : 9 / 16;
-    return { cols: this.cols, rows: Math.max(1, Math.round(this.cols * aspect * (this.renderer.cellWidth / this.renderer.cellHeight))) };
+    if (this.stream?.reader.info) return { cols: this.stream.reader.info.cols, rows: this.stream.reader.info.rows };
+    const video = this.media;
+    if (this.source?.type === 'video' && this.source.prescaled && video.videoWidth > 0) return { cols: video.videoWidth, rows: video.videoHeight };
+    const aspect = video.videoWidth > 0 ? video.videoHeight / video.videoWidth : 9 / 16;
+    return { cols: this.look.cols, rows: Math.max(1, Math.round(this.look.cols * aspect * (this.renderer.cellWidth / this.renderer.cellHeight))) };
   }
 
-  /** Sets the grid width in glyphs. */
-  resize(cols: number): void {
-    this.cols = Math.max(8, Math.round(cols));
-    this.options = { ...this.options, cols: this.cols };
-    this.render();
+  /** Loads a source and shows its first frame. Resolves once metadata is known. */
+  async load(source: Source | string): Promise<void> {
+    const next = typeof source === 'string' ? sourceFor(source) : source;
+    this.unload();
+    this.source = next;
+    this.ended = false;
+    if (next.type === 'video') {
+      this.mediaClock = true;
+      const video = this.media;
+      if (next.src instanceof MediaStream) video.srcObject = next.src;
+      else video.src = typeof next.src === 'string' ? next.src : URL.createObjectURL(next.src);
+      if (typeof next.src === 'string' && !next.src.startsWith('blob:') && !next.src.startsWith('data:')) video.crossOrigin = 'anonymous';
+      await new Promise<void>((resolve, reject) => {
+        video.addEventListener('loadeddata', () => resolve(), { once: true });
+        video.addEventListener('error', () => reject(new GlyphcastError(video.error?.message || 'The video cannot be loaded')), { once: true });
+      });
+      this.draw();
+      return;
+    }
+    await this.openStream(next, 0);
   }
 
-  /** Draws the current video frame once. */
-  render(): void {
-    if (this.video.readyState < 2) return;
+  private async openStream(source: Extract<Source, { type: 'gcast' }>, offset: number): Promise<void> {
+    const urls = offset > 0 && source.restart ? source.restart(offset) : { src: source.src, ...(source.audio ? { audio: source.audio } : {}) };
+    const state: StreamState = { source, reader: new StreamReader(), chunks: [], decoded: new Map(), abort: new AbortController(), offset, done: false, clockStart: 0, clockAt: 0 };
+    this.stream = state;
+    this.shownFrame = -1;
+    this.mediaClock = Boolean(urls.audio);
+    if (urls.audio) {
+      this.media.src = urls.audio;
+      this.media.crossOrigin = 'anonymous';
+    } else {
+      this.media.removeAttribute('src');
+    }
+    const response = await fetch(urls.src, { signal: state.abort.signal });
+    if (!response.ok || !response.body) throw new GlyphcastError(`Cannot load ${urls.src}: HTTP ${response.status}`);
+    const reader = response.body.getReader();
+    const first = new Promise<void>((resolve, reject) => {
+      const pump = async (): Promise<void> => {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunks = state.reader.push(value);
+          state.chunks.push(...chunks);
+          if (state.reader.info && (chunks.length > 0 || state.chunks.length > 0)) resolve();
+          if (chunks.length > 0) this.emit('progress');
+        }
+        state.done = true;
+        if (!state.reader.info) throw new GlyphcastError('The stream ended before its header');
+        resolve();
+        this.emit('progress');
+        this.emit('durationchange');
+      };
+      pump().catch((error: unknown) => {
+        if (state.abort.signal.aborted) return;
+        reject(error);
+        this.fail(error instanceof Error ? error : new GlyphcastError(String(error)));
+      });
+    });
+    await first;
+    this.emit('loadedmetadata');
+    this.emit('durationchange');
+    this.draw();
+  }
+
+  private unload(): void {
+    this.pauseLoop();
+    this.mediaClock = false;
+    if (this.stream) this.stream.abort.abort();
+    this.stream = null;
+    this.lastFrame = null;
+    this.shownFrame = -1;
+    const video = this.media;
+    video.pause();
+    if (video.srcObject instanceof MediaStream) for (const track of video.srcObject.getTracks()) track.stop();
+    video.srcObject = null;
+    if (video.src.startsWith('blob:')) URL.revokeObjectURL(video.src);
+    video.removeAttribute('src');
+    video.removeAttribute('crossorigin');
+    video.load();
+  }
+
+  /** Stops playback and releases the source. */
+  destroy(): void {
+    this.unload();
+    this.source = null;
+  }
+
+  /** True when the media element carries the clock: video sources and streams with audio. */
+  get hasAudio(): boolean {
+    return this.mediaClock;
+  }
+
+  get paused(): boolean {
+    if (this.stream && !this.hasAudio) return this.loop === null;
+    return this.media.paused;
+  }
+
+  get duration(): number {
+    const stream = this.stream;
+    if (stream) {
+      const info = stream.reader.info;
+      if (stream.source.duration) return stream.source.duration;
+      if (info?.frameCount) return info.frameCount / info.fps;
+      const frames = stream.chunks.reduce((sum, chunk) => sum + chunk.frames, 0);
+      return info ? stream.offset + frames / info.fps : 0;
+    }
+    return this.media.duration || 0;
+  }
+
+  /** End of the downloaded part, in seconds. */
+  get bufferedEnd(): number {
+    const stream = this.stream;
+    if (stream?.reader.info) return stream.offset + stream.chunks.reduce((sum, chunk) => sum + chunk.frames, 0) / stream.reader.info.fps;
+    const ranges = this.media.buffered;
+    return ranges.length > 0 ? ranges.end(ranges.length - 1) : 0;
+  }
+
+  get currentTime(): number {
+    const stream = this.stream;
+    if (!stream) return this.media.currentTime;
+    if (this.hasAudio) return stream.offset + this.media.currentTime;
+    return stream.clockAt + (this.loop !== null ? ((performance.now() - stream.clockStart) / 1000) * this.rate : 0);
+  }
+
+  set currentTime(seconds: number) {
+    void this.seek(seconds);
+  }
+
+  get volume(): number {
+    return this.media.volume;
+  }
+
+  set volume(value: number) {
+    this.media.volume = Math.min(1, Math.max(0, value));
+  }
+
+  get muted(): boolean {
+    return this.media.muted;
+  }
+
+  set muted(value: boolean) {
+    this.media.muted = value;
+  }
+
+  get playbackRate(): number {
+    return this.stream && !this.hasAudio ? this.rate : this.media.playbackRate;
+  }
+
+  set playbackRate(value: number) {
+    if (this.stream && !this.hasAudio) {
+      this.syncClock();
+      this.rate = value;
+      this.emit('ratechange');
+    } else {
+      this.media.playbackRate = value;
+    }
+  }
+
+  private syncClock(): void {
+    const stream = this.stream;
+    if (!stream) return;
+    stream.clockAt = this.currentTime;
+    stream.clockStart = performance.now();
+  }
+
+  async play(): Promise<void> {
+    if (!this.source) return;
+    if (this.ended) await this.seek(0);
+    this.ended = false;
+    if (this.hasAudio || !this.stream) await this.media.play();
+    else {
+      this.syncClock();
+      this.emit('play');
+      this.emit('playing');
+    }
+    this.startLoop();
+  }
+
+  pause(): void {
+    if (this.stream && !this.hasAudio) {
+      if (this.loop === null) return;
+      this.syncClock();
+      this.pauseLoop();
+      this.emit('pause');
+      return;
+    }
+    this.media.pause();
+    this.pauseLoop();
+    this.draw();
+  }
+
+  async seek(seconds: number): Promise<void> {
+    const time = Math.max(0, Math.min(seconds, this.duration || seconds));
+    const stream = this.stream;
+    if (!stream) {
+      this.media.currentTime = time;
+      return;
+    }
+    const info = stream.reader.info;
+    const loadedTo = this.bufferedEnd;
+    if (stream.source.restart && (time < stream.offset || (time > loadedTo + 2 && !stream.done))) {
+      const playing = !this.paused;
+      this.pauseLoop();
+      await this.openStream(stream.source, time);
+      if (playing) await this.play();
+      return;
+    }
+    if (this.hasAudio) this.media.currentTime = time - stream.offset;
+    stream.clockAt = time;
+    stream.clockStart = performance.now();
+    this.shownFrame = -1;
+    if (info) this.draw();
+    this.emit('timeupdate');
+  }
+
+  private finish(): void {
+    this.ended = true;
+    this.pauseLoop();
+    this.emit('ended');
+    this.emit('pause');
+  }
+
+  private startLoop(): void {
+    if (this.loop !== null) return;
+    let lastUpdate = 0;
+    const tick = (): void => {
+      this.draw();
+      const now = performance.now();
+      if (now - lastUpdate > 250) {
+        lastUpdate = now;
+        this.emit('timeupdate');
+      }
+      const stream = this.stream;
+      if (stream?.done && stream.reader.info && this.currentTime >= this.duration - 0.02) {
+        if (this.hasAudio) this.media.pause();
+        this.finish();
+        return;
+      }
+      if (this.loop !== null) this.loop = requestAnimationFrame(tick);
+    };
+    this.loop = requestAnimationFrame(tick);
+  }
+
+  private pauseLoop(): void {
+    if (this.loop !== null) cancelAnimationFrame(this.loop);
+    this.loop = null;
+  }
+
+  private paint(pixels: Uint8ClampedArray, cols: number, rows: number): void {
+    this.lastFrame = { pixels, cols, rows };
+    this.levels = this.look.autoLevels ? ease(this.levels, autoLevels(pixels)) : NEUTRAL;
+    this.renderer.draw(pixels, cols, rows, { levels: this.levels, boost: this.look.boost, tint: this.look.tint });
+  }
+
+  /** Draws the frame for the current time. */
+  draw(): void {
+    const stream = this.stream;
+    if (stream) {
+      this.drawStream(stream);
+      return;
+    }
+    const video = this.media as FrameVideo;
+    if (!this.source || video.readyState < 2 || video.videoWidth === 0) return;
     const { cols, rows } = this.grid();
     const canvas = this.sampler.canvas;
     if (canvas.width !== cols || canvas.height !== rows) {
       canvas.width = cols;
       canvas.height = rows;
     }
-    this.sampler.drawImage(this.video, 0, 0, cols, rows);
+    this.sampler.drawImage(video, 0, 0, cols, rows);
     let pixels: Uint8ClampedArray;
     try {
       pixels = this.sampler.getImageData(0, 0, cols, rows).data;
     } catch {
-      throw new GlyphcastError('The video is cross-origin without CORS, so its pixels cannot be read; serve it with CORS and set crossorigin="anonymous"');
+      this.pauseLoop();
+      this.fail(new GlyphcastError('The video is cross-origin without CORS, so its pixels cannot be read'));
+      return;
     }
     this.paint(pixels, cols, rows);
   }
 
-  /** Starts redrawing on every new video frame. */
-  start(): void {
-    if (this.handle !== null) return;
-    const video = this.video as FrameCallbackVideo;
-    const minGap = 1000 / (this.options.fps ?? 60);
-    const tick = (): void => {
-      const now = performance.now();
-      if (now - this.last >= minGap - 1) {
-        this.last = now;
-        this.render();
-      }
-      this.handle = video.requestVideoFrameCallback ? video.requestVideoFrameCallback(tick) : requestAnimationFrame(tick);
-    };
-    this.handle = video.requestVideoFrameCallback ? video.requestVideoFrameCallback(tick) : requestAnimationFrame(tick);
-  }
-
-  /** Stops redrawing. */
-  stop(): void {
-    if (this.handle === null) return;
-    const video = this.video as FrameCallbackVideo;
-    if (video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(this.handle);
-    else cancelAnimationFrame(this.handle);
-    this.handle = null;
-  }
-}
-
-export interface StreamOptions extends PlaybackOptions {
-  /** Audio to play along; its clock drives the frames. */
-  readonly audio?: HTMLMediaElement | null;
-  /** Called while the stream downloads, with the share of bytes received. */
-  readonly onProgress?: (loaded: number) => void;
-}
-
-/**
- * Plays a `.gcast` stream: the server sends compact glyph frames instead of video, the browser draws them.
- * Playback starts as soon as the first chunk arrives and follows the audio clock when audio is given.
- */
-export class GlyphStream extends Playback {
-  header: Header | null = null;
-  private bytes = new Uint8Array(0);
-  private received = 0;
-  private readonly decoded = new Map<number, Promise<Uint8ClampedArray[]>>();
-  private frame: Uint8ClampedArray | null = null;
-  private shown = -1;
-  private handle: number | null = null;
-  private clockStart = 0;
-  private clockOffset = 0;
-  private playing = false;
-
-  constructor(canvas: HTMLCanvasElement, private readonly options: StreamOptions = {}) {
-    super(canvas, options);
-  }
-
-  /** Duration in seconds, known once the header has arrived. */
-  get duration(): number {
-    return this.header ? this.header.frameCount / this.header.fps : 0;
-  }
-
-  /** Current position in seconds. */
-  get currentTime(): number {
-    const audio = this.options.audio;
-    if (audio) return audio.currentTime;
-    return this.playing ? this.clockOffset + (performance.now() - this.clockStart) / 1000 : this.clockOffset;
-  }
-
-  get paused(): boolean {
-    return !this.playing;
-  }
-
-  /** Downloads a stream progressively; resolves when the whole file is in. */
-  async load(source: string | URL | Uint8Array | ArrayBuffer): Promise<Header> {
-    if (typeof source === 'string' || source instanceof URL) {
-      const response = await fetch(source);
-      if (!response.ok || !response.body) throw new GlyphcastError(`Cannot load ${String(source)}: HTTP ${response.status}`);
-      const total = Number(response.headers.get('content-length')) || 0;
-      const reader = response.body.getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        this.append(value);
-        if (total > 0) this.options.onProgress?.(this.received / total);
-      }
-    } else {
-      this.append(source instanceof Uint8Array ? source : new Uint8Array(source));
-    }
-    if (!this.header) throw new GlyphcastError('The stream ended before its header');
-    this.options.onProgress?.(1);
-    this.render();
-    return this.header;
-  }
-
-  private append(chunk: Uint8Array): void {
-    if (this.received + chunk.length > this.bytes.length) {
-      const grown = new Uint8Array(Math.max(this.bytes.length * 2, this.received + chunk.length, 1 << 16));
-      grown.set(this.bytes.subarray(0, this.received));
-      this.bytes = grown;
-    }
-    this.bytes.set(chunk, this.received);
-    this.received += chunk.length;
-    if (!this.header) {
-      try {
-        this.header = readHeader(this.bytes.subarray(0, this.received));
-      } catch (error) {
-        if (!(error instanceof GlyphcastError) || !/Not enough bytes/.test(error.message)) throw error;
-      }
-    }
-  }
-
-  private chunk(index: number): Promise<Uint8ClampedArray[]> | null {
-    const header = this.header;
-    const entry = header?.chunks[index];
-    if (!header || !entry || entry.offset + entry.size > this.received) return null;
-    let pending = this.decoded.get(index);
-    if (!pending) {
-      pending = decodeChunk(header, this.bytes.slice(entry.offset, entry.offset + entry.size));
-      this.decoded.set(index, pending);
-      for (const key of this.decoded.keys()) if (Math.abs(key - index) > 2) this.decoded.delete(key);
-    }
-    return pending;
-  }
-
-  /** Draws the frame for the current time. */
-  render(): void {
-    const header = this.header;
-    if (!header) return;
-    const index = Math.min(header.frameCount - 1, Math.max(0, Math.floor(this.currentTime * header.fps)));
-    const chunkIndex = Math.floor(index / header.chunkFrames);
-    this.chunk(chunkIndex + 1);
-    const pending = this.chunk(chunkIndex);
-    if (index === this.shown || !pending) {
-      if (this.frame) this.paint(this.frame, header.cols, header.rows);
+  private drawStream(stream: StreamState): void {
+    const info = stream.reader.info;
+    if (!info) return;
+    const index = Math.max(0, Math.floor((this.currentTime - stream.offset) * info.fps));
+    const position = stream.chunks.findIndex((chunk) => index >= chunk.start && index < chunk.start + chunk.frames);
+    const chunk = stream.chunks[position];
+    if (!chunk) {
+      if (this.lastFrame) this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
       return;
     }
-    void pending.then((frames) => {
-      const frame = frames[index - chunkIndex * header.chunkFrames];
+    const nextChunk = stream.chunks[position + 1];
+    if (nextChunk) this.decode(stream, info, nextChunk);
+    if (index === this.shownFrame && this.lastFrame) {
+      this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
+      return;
+    }
+    void this.decode(stream, info, chunk).then((frames) => {
+      if (this.stream !== stream) return;
+      const frame = frames[index - chunk.start];
       if (!frame) return;
-      this.frame = frame;
-      this.shown = index;
-      this.paint(frame, header.cols, header.rows);
+      this.shownFrame = index;
+      this.paint(frame, info.cols, info.rows);
     });
   }
 
-  async play(): Promise<void> {
-    if (this.playing) return;
-    this.playing = true;
-    this.clockStart = performance.now();
-    if (this.options.audio) await this.options.audio.play();
-    const tick = (): void => {
-      this.render();
-      if (!this.options.audio && this.currentTime >= this.duration) this.pause();
-      if (this.playing) this.handle = requestAnimationFrame(tick);
-    };
-    this.handle = requestAnimationFrame(tick);
-  }
-
-  pause(): void {
-    if (!this.playing) return;
-    this.clockOffset = this.currentTime;
-    this.playing = false;
-    this.options.audio?.pause();
-    if (this.handle !== null) cancelAnimationFrame(this.handle);
-    this.handle = null;
-  }
-
-  /** Jumps to a time in seconds. */
-  seek(seconds: number): void {
-    const time = Math.min(Math.max(seconds, 0), this.duration);
-    if (this.options.audio) this.options.audio.currentTime = time;
-    this.clockOffset = time;
-    this.clockStart = performance.now();
-    this.render();
+  private decode(stream: StreamState, info: StreamInfo, chunk: Chunk): Promise<Uint8ClampedArray[]> {
+    let pending = stream.decoded.get(chunk.start);
+    if (!pending) {
+      pending = decodeChunk(info, chunk.data);
+      stream.decoded.set(chunk.start, pending);
+      for (const key of stream.decoded.keys()) if (Math.abs(key - chunk.start) > info.chunkFrames * 3) stream.decoded.delete(key);
+    }
+    return pending;
   }
 }

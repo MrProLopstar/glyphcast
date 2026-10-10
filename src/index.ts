@@ -1,14 +1,16 @@
 /**
  * # glyphcast
  *
- * Video as colored glyphs in the browser. `GlyphVideo` redraws any `<video>` as characters with WebGL2;
- * `GlyphStream` plays `.gcast` files, a compact stream of glyph frames that a server can send instead of video.
+ * Video as colored glyphs in the browser with WebGL2. `<glyph-player>` from `glyphcast/element` is a complete
+ * player with controls; `GlyphPlayer` is the engine without UI. Both play videos, cameras and `.gcast` streams,
+ * a compact stream of glyph frames that a server can send instead of video.
  *
  * ```ts
- * import { GlyphVideo } from 'glyphcast';
+ * import { GlyphPlayer } from 'glyphcast';
  *
- * const player = new GlyphVideo(document.querySelector('video')!, document.querySelector('canvas')!, { cols: 160 });
- * player.start();
+ * const player = new GlyphPlayer(document.querySelector('canvas')!, { cols: 160 });
+ * await player.load('movie.mp4');
+ * await player.play();
  * ```
  *
  * Encode streams with the CLI (`npx glyphcast encode video.mp4`) or `encodeVideo` from `glyphcast/node`.
@@ -17,7 +19,7 @@
  *
  * @module
  */
-export { Encoder, GlyphcastError, readHeader, decodeChunk, type EncodeOptions, type Header, type StreamInfo } from './format.js';
+export { decodeChunk, Encoder, frameChunk, GlyphcastError, readHeader, StreamReader, writeHeader, type Chunk, type EncodeOptions, type StreamInfo } from './format.js';
 export { autoLevels, glyphIndex, luma, type Levels } from './levels.js';
 export { DEFAULT_GLYPHS, GlyphRenderer, type FrameStyle, type RendererOptions } from './renderer.js';
-export { GlyphStream, GlyphVideo, type PlaybackOptions, type StreamOptions, type VideoOptions } from './player.js';
+export { GlyphPlayer, sourceFor, type LookOptions, type PlayerOptions, type Source } from './player.js';

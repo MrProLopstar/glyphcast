@@ -1,19 +1,30 @@
 export const MAGIC = 0x54534347;
-export const VERSION = 1;
-const HEADER_SIZE = 24;
-const ENTRY_SIZE = 8;
+export const VERSION = 2;
+export const HEADER_SIZE = 20;
+const CHUNK_HEAD = 6;
 
 export interface StreamInfo {
   readonly cols: number;
   readonly rows: number;
   readonly fps: number;
-  readonly frameCount: number;
   readonly chunkFrames: number;
+  /** Total frames, or 0 for a live stream of unknown length. */
+  readonly frameCount: number;
 }
 
 export interface EncodeOptions extends Omit<StreamInfo, 'frameCount'> {
   /** Squared RGB distance below which a cell keeps its previous color. Higher means smaller streams. Default 500. */
   readonly threshold?: number;
+  /** Total frames if known in advance, written to the header. Default 0 (unknown). */
+  readonly frameCount?: number;
+}
+
+export interface Chunk {
+  /** Index of the first frame in the chunk. */
+  readonly start: number;
+  readonly frames: number;
+  /** Compressed payload, without the 6-byte chunk head. */
+  readonly data: Uint8Array;
 }
 
 export class GlyphcastError extends Error {
@@ -44,32 +55,127 @@ const validate = ({ cols, rows, fps, chunkFrames }: Omit<StreamInfo, 'frameCount
   if (!Number.isInteger(chunkFrames) || chunkFrames < 1 || chunkFrames > 65535) throw new GlyphcastError(`chunkFrames must be an integer from 1 to 65535, got ${chunkFrames}`);
 };
 
+/** The 20-byte stream header. */
+export const writeHeader = (info: StreamInfo): Uint8Array => {
+  validate(info);
+  const out = new Uint8Array(HEADER_SIZE);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, MAGIC, true);
+  view.setUint8(4, VERSION);
+  view.setUint16(6, info.cols, true);
+  view.setUint16(8, info.rows, true);
+  view.setFloat32(10, info.fps, true);
+  view.setUint16(14, info.chunkFrames, true);
+  view.setUint32(16, info.frameCount, true);
+  return out;
+};
+
+/** Reads the stream header. Throws `GlyphcastError` if the bytes are not a `.gcast` header. */
+export const readHeader = (bytes: Uint8Array): StreamInfo => {
+  if (bytes.length < HEADER_SIZE) throw new GlyphcastError('Not enough bytes for a .gcast header');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== MAGIC) throw new GlyphcastError('Not a .gcast stream');
+  const version = view.getUint8(4);
+  if (version !== VERSION) throw new GlyphcastError(`Unsupported .gcast version ${version}`);
+  const info = {
+    cols: view.getUint16(6, true),
+    rows: view.getUint16(8, true),
+    fps: view.getFloat32(10, true),
+    chunkFrames: view.getUint16(14, true),
+    frameCount: view.getUint32(16, true),
+  };
+  validate(info);
+  return info;
+};
+
+/** Frames a compressed chunk for the wire: 4-byte size, 2-byte frame count, payload. */
+export const frameChunk = (chunk: Chunk): Uint8Array => {
+  const out = new Uint8Array(CHUNK_HEAD + chunk.data.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, chunk.data.length, true);
+  view.setUint16(4, chunk.frames, true);
+  out.set(chunk.data, CHUNK_HEAD);
+  return out;
+};
+
+/**
+ * Splits bytes as they arrive into the header and chunks. Works for whole files, progressive downloads and live
+ * streams alike: feed it whatever came in, it returns the chunks completed so far.
+ */
+export class StreamReader {
+  info: StreamInfo | null = null;
+  private buffer = new Uint8Array(0);
+  private length = 0;
+  private frames = 0;
+
+  push(bytes: Uint8Array): Chunk[] {
+    if (this.length + bytes.length > this.buffer.length) {
+      const grown = new Uint8Array(Math.max(this.buffer.length * 2, this.length + bytes.length, 1 << 16));
+      grown.set(this.buffer.subarray(0, this.length));
+      this.buffer = grown;
+    }
+    this.buffer.set(bytes, this.length);
+    this.length += bytes.length;
+    let at = 0;
+    if (!this.info) {
+      if (this.length < HEADER_SIZE) return [];
+      this.info = readHeader(this.buffer.subarray(0, HEADER_SIZE));
+      at = HEADER_SIZE;
+    }
+    const chunks: Chunk[] = [];
+    while (this.length - at >= CHUNK_HEAD) {
+      const view = new DataView(this.buffer.buffer, this.buffer.byteOffset + at, CHUNK_HEAD);
+      const size = view.getUint32(0, true);
+      const frames = view.getUint16(4, true);
+      if (this.length - at - CHUNK_HEAD < size) break;
+      chunks.push({ start: this.frames, frames, data: this.buffer.slice(at + CHUNK_HEAD, at + CHUNK_HEAD + size) });
+      this.frames += frames;
+      at += CHUNK_HEAD + size;
+    }
+    this.buffer.copyWithin(0, at, this.length);
+    this.length -= at;
+    return chunks;
+  }
+}
+
 /**
  * Builds a `.gcast` stream frame by frame. Frames are RGB24 or RGBA pixels at the grid size; colors are stored
- * as 12-bit RGB in two byte planes, cells that barely changed are skipped, and every `chunkFrames` frames form an independently compressed chunk
- * that starts with a key frame, so playback can seek to any chunk.
+ * as 12-bit RGB in two byte planes, cells that barely changed are skipped, and every `chunkFrames` frames form a
+ * compressed chunk that starts with a key frame, so playback can begin or seek at any chunk.
+ *
+ * `onChunk` receives each finished chunk, ready for a file or an HTTP response; `finish()` also returns a whole file.
  */
 export class Encoder {
+  readonly info: StreamInfo;
   private readonly cells: number;
   private readonly threshold: number;
   private readonly previous: Int16Array;
-  private readonly chunks: Promise<Uint8Array>[] = [];
   private parts: Uint8Array[] = [];
+  private inChunk = 0;
   private frames = 0;
+  private chunkStart = 0;
+  private queue: Promise<void> = Promise.resolve();
+  private readonly finished: Uint8Array[] = [];
 
-  constructor(private readonly options: EncodeOptions) {
-    validate(options);
+  constructor(options: EncodeOptions, private readonly onChunk?: (bytes: Uint8Array) => void) {
+    this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0 };
+    validate(this.info);
     this.cells = options.cols * options.rows;
     this.threshold = options.threshold ?? 500;
     this.previous = new Int16Array(this.cells * 3);
+    this.emit(writeHeader(this.info));
+  }
+
+  private emit(bytes: Uint8Array): void {
+    this.finished.push(bytes);
+    this.onChunk?.(bytes);
   }
 
   /** Adds a frame of `cols × rows` pixels, 3 or 4 bytes per pixel. */
   add(pixels: Uint8Array | Uint8ClampedArray): void {
     const stride = pixels.length / this.cells;
     if (stride !== 3 && stride !== 4) throw new GlyphcastError(`A frame must have ${this.cells * 3} or ${this.cells * 4} bytes, got ${pixels.length}`);
-    const key = this.frames % this.options.chunkFrames === 0;
-    if (key && this.parts.length > 0) this.flush();
+    const key = this.inChunk === 0;
     const high = new Uint8Array(this.cells);
     const low = new Uint8Array(this.cells);
     const changed = new Uint8Array(Math.ceil(this.cells / 8));
@@ -95,82 +201,49 @@ export class Encoder {
     }
     this.parts.push(new Uint8Array([key ? 0 : 1]), key ? new Uint8Array(0) : changed, high.slice(0, count), low.slice(0, count));
     this.frames += 1;
+    this.inChunk += 1;
+    if (this.inChunk === this.info.chunkFrames) this.flush();
   }
 
   private flush(): void {
-    const size = this.parts.reduce((sum, part) => sum + part.length, 0);
-    const raw = new Uint8Array(size);
+    if (this.inChunk === 0) return;
+    const raw = new Uint8Array(this.parts.reduce((sum, part) => sum + part.length, 0));
     let at = 0;
     for (const part of this.parts) {
       raw.set(part, at);
       at += part.length;
     }
-    this.chunks.push(deflate(raw));
+    const chunk = { start: this.chunkStart, frames: this.inChunk };
+    this.chunkStart += this.inChunk;
     this.parts = [];
+    this.inChunk = 0;
+    const compressed = deflate(raw);
+    this.queue = this.queue.then(async () => this.emit(frameChunk({ ...chunk, data: await compressed })));
   }
 
-  /** Finishes the stream and returns the `.gcast` bytes. */
+  /** Waits for every chunk to be emitted. Call it to apply backpressure in long encodes. */
+  drain(): Promise<void> {
+    return this.queue;
+  }
+
+  /** Flushes the last chunk and returns the whole stream; the header carries the final frame count. */
   async finish(): Promise<Uint8Array> {
-    if (this.parts.length > 0) this.flush();
-    const chunks = await Promise.all(this.chunks);
-    const tableSize = chunks.length * ENTRY_SIZE;
-    const total = HEADER_SIZE + tableSize + chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const out = new Uint8Array(total);
-    const view = new DataView(out.buffer);
-    view.setUint32(0, MAGIC, true);
-    view.setUint8(4, VERSION);
-    view.setUint16(6, this.options.cols, true);
-    view.setUint16(8, this.options.rows, true);
-    view.setFloat32(10, this.options.fps, true);
-    view.setUint32(14, this.frames, true);
-    view.setUint16(18, this.options.chunkFrames, true);
-    view.setUint32(20, chunks.length, true);
-    let offset = HEADER_SIZE + tableSize;
-    chunks.forEach((chunk, index) => {
-      view.setUint32(HEADER_SIZE + index * ENTRY_SIZE, offset, true);
-      view.setUint32(HEADER_SIZE + index * ENTRY_SIZE + 4, chunk.length, true);
-      out.set(chunk, offset);
-      offset += chunk.length;
-    });
+    this.flush();
+    await this.queue;
+    const header = writeHeader({ ...this.info, frameCount: this.frames });
+    const parts = [header, ...this.finished.slice(1)];
+    const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+    let at = 0;
+    for (const part of parts) {
+      out.set(part, at);
+      at += part.length;
+    }
     return out;
   }
 }
 
-export interface Header extends StreamInfo {
-  readonly chunks: readonly { readonly offset: number; readonly size: number }[];
-  /** Bytes needed before chunk data starts. */
-  readonly dataStart: number;
-}
-
-/** Reads the header and chunk table. Throws `GlyphcastError` if the bytes are not a complete `.gcast` header. */
-export const readHeader = (bytes: Uint8Array): Header => {
-  if (bytes.length < HEADER_SIZE) throw new GlyphcastError('Not enough bytes for a .gcast header');
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (view.getUint32(0, true) !== MAGIC) throw new GlyphcastError('Not a .gcast stream');
-  const version = view.getUint8(4);
-  if (version !== VERSION) throw new GlyphcastError(`Unsupported .gcast version ${version}`);
-  const count = view.getUint32(20, true);
-  const dataStart = HEADER_SIZE + count * ENTRY_SIZE;
-  if (bytes.length < dataStart) throw new GlyphcastError('Not enough bytes for the chunk table');
-  const info = {
-    cols: view.getUint16(6, true),
-    rows: view.getUint16(8, true),
-    fps: view.getFloat32(10, true),
-    frameCount: view.getUint32(14, true),
-    chunkFrames: view.getUint16(18, true),
-  };
-  validate(info);
-  const chunks = Array.from({ length: count }, (_, index) => ({
-    offset: view.getUint32(HEADER_SIZE + index * ENTRY_SIZE, true),
-    size: view.getUint32(HEADER_SIZE + index * ENTRY_SIZE + 4, true),
-  }));
-  return { ...info, chunks, dataStart };
-};
-
-/**
- * Decodes one compressed chunk into RGBA frames (`cols × rows × 4` bytes each), ready to upload as a texture.
- */
-export const decodeChunk = async (info: StreamInfo, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => {
+/** Decodes one chunk payload into RGBA frames (`cols × rows × 4` bytes each), ready to upload as a texture. */
+export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows'>, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => {
   const raw = await inflate(compressed);
   const cells = info.cols * info.rows;
   const maskSize = Math.ceil(cells / 8);

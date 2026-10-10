@@ -79,4 +79,5 @@ export const encodeMicroVideo = async (input: string, output: string, options: E
 export const extractAudio = (input: string, output: string, options: { readonly bitrate?: string; readonly ffmpeg?: string } = {}): Promise<string> =>
   run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', '-i', input, '-vn', '-c:a', 'libopus', '-b:a', options.bitrate ?? '64k', output]);
 
-export { Encoder, GlyphcastError, readHeader, decodeChunk } from './format.js';
+export { decodeChunk, Encoder, GlyphcastError, readHeader, StreamReader } from './format.js';
+export { serve, type ServeOptions, type VideoInfo } from './serve.js';
