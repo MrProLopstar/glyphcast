@@ -54,8 +54,8 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .idle .controls { opacity: 0; transform: translateY(8px); pointer-events: none; }
 .idle { cursor: none; }
 .progress { position: relative; height: 18px; cursor: pointer; display: flex; align-items: center; margin: 0 4px; }
-.track { position: relative; width: 100%; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.22); transition: height 0.15s; }
-.progress:hover .track { height: 6px; }
+.track { position: relative; width: 100%; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.22); transform: scaleY(0.67); transition: transform 0.15s; }
+.progress:hover .track { transform: scaleY(1); }
 .buffer, .played { position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit; }
 .buffer { background: rgba(255,255,255,0.35); }
 .played { background: var(--accent); }
@@ -69,8 +69,8 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .time { font: 13px ui-monospace, Consolas, monospace; margin: 0 10px; white-space: nowrap; }
 .spacer { flex: 1; }
 .volume { display: flex; align-items: center; }
-.volume input { width: 0; opacity: 0; transition: width 0.2s, opacity 0.2s; accent-color: var(--accent); }
-.volume:hover input, .volume input:focus { width: 84px; opacity: 1; margin-right: 6px; }
+.volume input { width: 84px; margin-right: 6px; opacity: 0.75; transition: opacity 0.2s; accent-color: var(--accent); }
+.volume:hover input, .volume input:focus { opacity: 1; }
 .menu { position: absolute; right: 12px; bottom: 64px; min-width: 240px; max-height: calc(100% - 80px); overflow: auto; padding: 8px; border-radius: 12px; background: var(--panel); backdrop-filter: blur(10px); box-shadow: 0 12px 40px rgba(0,0,0,0.5); display: none; }
 .menu.on { display: block; }
 .menu h4 { margin: 8px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.55); }
