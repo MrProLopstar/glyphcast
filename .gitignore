@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+site/lib
+*.gcast
+!site/*.gcast
+site/test-*.mp4

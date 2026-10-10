@@ -1,0 +1,66 @@
+{
+  "name": "glyphcast",
+  "version": "0.1.0",
+  "description": "Video as colored glyphs in the browser with WebGL2, plus a compact glyph stream format a server can send instead of video",
+  "keywords": [
+    "ascii",
+    "ascii-art",
+    "video",
+    "player",
+    "webgl",
+    "canvas",
+    "streaming",
+    "glyph",
+    "terminal",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "MrProLopstar",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "glyphcast": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "README.ru.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrProLopstar/glyphcast.git"
+  },
+  "homepage": "https://github.com/MrProLopstar/glyphcast#readme",
+  "bugs": {
+    "url": "https://github.com/MrProLopstar/glyphcast/issues"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepare": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
