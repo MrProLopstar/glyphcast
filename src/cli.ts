@@ -5,11 +5,14 @@ import { parseArgs } from 'node:util';
 import { StreamReader } from './format.js';
 import { encodeMicroVideo, encodeVideo, extractAudio } from './node.js';
 import { serve } from './serve.js';
+import { playInTerminal } from './terminal.js';
 
 const USAGE = `glyphcast: video as glyphs
 
-  glyphcast encode <video> [--out file.gcast] [--cols 160] [--fps 30] [--audio file.opus] [--chunk 2]
-  glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 30]
+  glyphcast encode <video> [--out file.gcast] [--cols 160] [--fps 24] [--threshold 3] [--audio file.opus] [--chunk 2]
+  glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
+  glyphcast play <file.gcast | stream URL | video> [--cols width]
+      plays in the terminal with 24-bit color glyphs
   glyphcast info <file.gcast>
   glyphcast serve [--port 8787] [--dir videos] [--no-youtube] [--yt-dlp path] [--ffmpeg path]
       live .gcast streams from YouTube links and videos in --dir, for <glyph-player>
@@ -26,6 +29,7 @@ const main = async (): Promise<void> => {
       cols: { type: 'string' },
       fps: { type: 'string' },
       chunk: { type: 'string' },
+      threshold: { type: 'string' },
       audio: { type: 'string' },
       port: { type: 'string' },
       dir: { type: 'string' },
@@ -45,6 +49,10 @@ const main = async (): Promise<void> => {
   if (values.help || !command || !input) {
     console.log(USAGE);
     process.exitCode = command ? 1 : 0;
+    return;
+  }
+  if (command === 'play') {
+    await playInTerminal(input, { ...(values.cols ? { cols: Number(values.cols) } : {}), ...(values.fps ? { fps: Number(values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
     return;
   }
   if (command === 'info') {
@@ -69,6 +77,7 @@ const main = async (): Promise<void> => {
     ...(values.cols ? { cols: Number(values.cols) } : {}),
     ...(values.fps ? { fps: Number(values.fps) } : {}),
     ...(values.chunk ? { chunkSeconds: Number(values.chunk) } : {}),
+    ...(values.threshold ? { threshold: Number(values.threshold) } : {}),
   });
   writeFileSync(out, bytes);
   const reader = new StreamReader();

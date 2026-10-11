@@ -1,6 +1,11 @@
 import { NEUTRAL, type Levels } from './levels.js';
 
 export const DEFAULT_GLYPHS = ' .:-=+*#%@';
+const EDGE_GLYPHS = '-/|\\';
+
+/** How a cell is drawn: a glyph from the set, a 2×4 braille dot pattern, or a halftone dot sized by brightness. */
+export type RenderMode = 'glyphs' | 'braille' | 'halftone';
+const MODES: readonly RenderMode[] = ['glyphs', 'braille', 'halftone'];
 
 export interface RendererOptions {
   /** Glyphs from dark to bright. Default `' .:-=+*#%@'`. */
@@ -19,6 +24,12 @@ export interface FrameStyle {
   readonly boost?: number;
   /** Paint every glyph in one color instead of the frame colors, CSS hex. */
   readonly tint?: string | null;
+  /** Default `glyphs`. */
+  readonly mode?: RenderMode;
+  /** Draw contours with `- / | \` along their direction. Glyph mode only. Default false. */
+  readonly edges?: boolean;
+  /** Scanlines, vignette and glow of a tube screen. Default false. */
+  readonly crt?: boolean;
 }
 
 const VERTEX = `#version 300 es
@@ -35,6 +46,7 @@ in vec2 uv;
 out vec4 color;
 uniform sampler2D cells;
 uniform sampler2D atlas;
+uniform sampler2D overlay;
 uniform vec2 grid;
 uniform float glyphs;
 uniform float brightness;
@@ -42,18 +54,72 @@ uniform float contrast;
 uniform float boost;
 uniform vec3 background;
 uniform vec4 tint;
+uniform int mode;
+uniform float edges;
+uniform float crt;
+uniform float captions;
+const vec3 WEIGHTS = vec3(0.299, 0.587, 0.114);
+const float PI = 3.14159265;
+float leveled(float luma) {
+  return clamp((luma - 0.5) * contrast + 0.5 + brightness, 0.0, 1.0);
+}
+float lumaAt(vec2 cell) {
+  return dot(texelFetch(cells, ivec2(clamp(cell, vec2(0.0), grid - 1.0)), 0).rgb, WEIGHTS);
+}
+vec3 paint(vec3 source, float level) {
+  float luma = dot(source, WEIGHTS);
+  vec3 vivid = clamp(mix(vec3(luma), source, boost) * (0.55 + level * 0.9), 0.0, 1.0);
+  return mix(vivid, tint.rgb * (0.35 + level), tint.a);
+}
+float bayer(vec2 spot) {
+  int index = int(spot.x) + int(spot.y) * 2;
+  float[8] matrix = float[8](0.0625, 0.5625, 0.8125, 0.3125, 0.9375, 0.4375, 0.1875, 0.6875);
+  return matrix[index];
+}
 void main() {
   vec2 position = uv * grid;
   vec2 cell = floor(position);
   vec2 local = fract(position);
   vec3 source = texelFetch(cells, ivec2(cell), 0).rgb;
-  float luma = dot(source, vec3(0.299, 0.587, 0.114));
-  float level = clamp((luma - 0.5) * contrast + 0.5 + brightness, 0.0, 1.0);
-  float index = min(glyphs - 1.0, floor(level * glyphs));
-  float ink = texture(atlas, vec2((index + local.x) / glyphs, local.y)).r;
-  vec3 vivid = clamp(mix(vec3(luma), source, boost) * (0.55 + level * 0.9), 0.0, 1.0);
-  vec3 glyph = mix(vivid, tint.rgb * (0.35 + level), tint.a);
-  color = vec4(mix(background, glyph, ink), 1.0);
+  float level = leveled(dot(source, WEIGHTS));
+  vec3 glyph = paint(source, level);
+  float ink;
+  if (mode == 1) {
+    vec2 spot = floor(local * vec2(2.0, 4.0));
+    vec3 near = texture(cells, (cell + (spot + 0.5) / vec2(2.0, 4.0)) / grid).rgb;
+    float lit = step(bayer(spot), leveled(dot(near, WEIGHTS)));
+    vec2 inside = (fract(local * vec2(2.0, 4.0)) - 0.5) * vec2(1.2, 1.0);
+    ink = lit * smoothstep(0.42, 0.3, length(inside));
+    glyph = paint(near, level);
+  } else if (mode == 2) {
+    float radius = sqrt(level) * 0.46;
+    float distance = length((local - 0.5) * vec2(0.6, 1.0));
+    ink = smoothstep(radius + 0.04, radius - 0.02, distance);
+  } else {
+    float index = min(glyphs - 1.0, floor(level * glyphs));
+    if (edges > 0.5) {
+      float gx = lumaAt(cell + vec2(1, -1)) + 2.0 * lumaAt(cell + vec2(1, 0)) + lumaAt(cell + vec2(1, 1)) - lumaAt(cell + vec2(-1, -1)) - 2.0 * lumaAt(cell + vec2(-1, 0)) - lumaAt(cell + vec2(-1, 1));
+      float gy = lumaAt(cell + vec2(-1, 1)) + 2.0 * lumaAt(cell + vec2(0, 1)) + lumaAt(cell + vec2(1, 1)) - lumaAt(cell + vec2(-1, -1)) - 2.0 * lumaAt(cell + vec2(0, -1)) - lumaAt(cell + vec2(1, -1));
+      vec2 gradient = vec2(gx / 0.6, gy) * contrast;
+      if (length(gradient) > 0.9 && level > 0.12) {
+        float angle = mod(atan(gx / 0.6, gy) + PI, PI);
+        index = glyphs + mod(floor(angle / (PI / 4.0) + 0.5), 4.0);
+      }
+    }
+    ink = texture(atlas, vec2((index + local.x) / (glyphs + 4.0), local.y)).r;
+  }
+  vec3 result = mix(background, glyph, ink);
+  if (crt > 0.5) {
+    result += paint(source, level) * 0.12;
+    result *= 0.78 + 0.22 * sin(gl_FragCoord.y * PI * 0.5);
+    vec2 center = uv - 0.5;
+    result *= 1.0 - dot(center, center) * 0.9;
+  }
+  if (captions > 0.5) {
+    vec4 text = texture(overlay, uv);
+    result = mix(result, text.rgb, text.a);
+  }
+  color = vec4(result, 1.0);
 }`;
 
 const hex = (value: string): [number, number, number] => {
@@ -86,6 +152,7 @@ export class GlyphRenderer {
   private readonly uniforms: Readonly<Record<string, WebGLUniformLocation | null>>;
   private cols = 0;
   private rows = 0;
+  private caption: string | null = null;
 
   constructor(readonly canvas: HTMLCanvasElement | OffscreenCanvas, options: RendererOptions = {}) {
     this.glyphs = options.glyphs ?? DEFAULT_GLYPHS;
@@ -113,13 +180,15 @@ export class GlyphRenderer {
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
 
     this.uniforms = Object.fromEntries(
-      ['cells', 'atlas', 'grid', 'glyphs', 'brightness', 'contrast', 'boost', 'background', 'tint'].map((name) => [name, gl.getUniformLocation(program, name)]),
+      ['cells', 'atlas', 'overlay', 'grid', 'glyphs', 'brightness', 'contrast', 'boost', 'background', 'tint', 'mode', 'edges', 'crt', 'captions'].map((name) => [name, gl.getUniformLocation(program, name)]),
     );
 
     this.cellsTexture = this.texture(0);
     this.texture(1);
+    this.texture(2);
     gl.uniform1i(this.uniforms['cells'] ?? null, 0);
     gl.uniform1i(this.uniforms['atlas'] ?? null, 1);
+    gl.uniform1i(this.uniforms['overlay'] ?? null, 2);
     this.setGlyphs(this.glyphs);
     this.setBackground(options.background ?? '#05070a');
   }
@@ -141,19 +210,55 @@ export class GlyphRenderer {
     const list = [...glyphs];
     if (list.length < 2) throw new Error('At least two glyphs are needed');
     this.glyphs = glyphs;
-    const font = this.font;
-    const atlas = new OffscreenCanvas(this.cellWidth * list.length, this.cellHeight);
+    const atlas = new OffscreenCanvas(this.cellWidth * (list.length + EDGE_GLYPHS.length), this.cellHeight);
     const context = atlas.getContext('2d');
     if (!context) throw new Error('Cannot draw the glyph atlas');
     context.fillStyle = '#fff';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.font = `${Math.round(this.cellHeight * 0.92)}px ${font}`;
-    list.forEach((glyph, index) => context.fillText(glyph, (index + 0.5) * this.cellWidth, this.cellHeight * 0.54));
+    context.font = `${Math.round(this.cellHeight * 0.92)}px ${this.font}`;
+    [...list, ...EDGE_GLYPHS].forEach((glyph, index) => context.fillText(glyph, (index + 0.5) * this.cellWidth, this.cellHeight * 0.54));
     const { gl } = this;
     gl.activeTexture(gl.TEXTURE1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas);
     gl.uniform1f(this.uniforms['glyphs'] ?? null, list.length);
+  }
+
+  /**
+   * Shows text over the picture, drawn with the glyph font on the cell grid, or hides it with null. Used for
+   * subtitles; lines are centered near the bottom.
+   */
+  setCaption(text: string | null): void {
+    this.caption = text?.trim() || null;
+    this.drawCaption();
+  }
+
+  private drawCaption(): void {
+    const { gl } = this;
+    gl.uniform1f(this.uniforms['captions'] ?? null, this.caption && this.cols ? 1 : 0);
+    if (!this.caption || !this.cols) return;
+    const scale = Math.max(1, Math.round(this.cols / 80));
+    const lines = this.caption.split('\n');
+    const height = this.rows * this.cellHeight;
+    const layer = new OffscreenCanvas(this.cols * this.cellWidth, height);
+    const context = layer.getContext('2d');
+    if (!context) return;
+    const lineHeight = this.cellHeight * scale;
+    context.font = `${Math.round(lineHeight * 0.92)}px ${this.font}`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    lines.forEach((line, index) => {
+      const chars = [...line];
+      const cells = chars.length * scale;
+      const start = Math.max(0, Math.floor((this.cols - cells) / 2));
+      const top = height - (lines.length - index + 1) * lineHeight;
+      context.fillStyle = 'rgba(0, 0, 0, 0.78)';
+      context.fillRect((start - scale) * this.cellWidth, top, (cells + scale * 2) * this.cellWidth, lineHeight);
+      context.fillStyle = '#fff6c8';
+      chars.forEach((char, at) => context.fillText(char, (start + (at + 0.5) * scale) * this.cellWidth, top + lineHeight * 0.54));
+    });
+    gl.activeTexture(gl.TEXTURE2);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer);
   }
 
   /** Sets the background color, CSS hex. */
@@ -176,6 +281,7 @@ export class GlyphRenderer {
       canvas.height = height;
       this.cols = cols;
       this.rows = rows;
+      this.drawCaption();
     }
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.activeTexture(gl.TEXTURE0);
@@ -187,8 +293,10 @@ export class GlyphRenderer {
     gl.uniform1f(this.uniforms['brightness'] ?? null, levels.brightness);
     gl.uniform1f(this.uniforms['contrast'] ?? null, levels.contrast);
     gl.uniform1f(this.uniforms['boost'] ?? null, style.boost ?? 1.3);
-    const tint = style.tint ? [...hex(style.tint), 1] : [0, 0, 0, 0];
-    gl.uniform4fv(this.uniforms['tint'] ?? null, tint);
+    gl.uniform4fv(this.uniforms['tint'] ?? null, style.tint ? [...hex(style.tint), 1] : [0, 0, 0, 0]);
+    gl.uniform1i(this.uniforms['mode'] ?? null, Math.max(0, MODES.indexOf(style.mode ?? 'glyphs')));
+    gl.uniform1f(this.uniforms['edges'] ?? null, style.edges ? 1 : 0);
+    gl.uniform1f(this.uniforms['crt'] ?? null, style.crt ? 1 : 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }

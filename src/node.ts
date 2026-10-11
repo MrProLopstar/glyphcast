@@ -4,11 +4,11 @@ import { Encoder, GlyphcastError } from './format.js';
 export interface EncodeVideoOptions {
   /** Grid width in glyphs. Default 160. */
   readonly cols?: number;
-  /** Frames per second in the stream. Default 30. */
+  /** Frames per second in the stream. 15 looks deliberate and is a quarter smaller than 24. Default 24. */
   readonly fps?: number;
   /** Seconds per independently decodable chunk. Default 2. */
   readonly chunkSeconds?: number;
-  /** Squared RGB distance treated as "unchanged". Default 48. */
+  /** Brightness steps (of 63) a cell may drift before it is resent. 2 is crisp, 4 is small. Default 3. */
   readonly threshold?: number;
   /** Glyph width divided by height, used to pick the row count. Default 0.6. */
   readonly glyphAspect?: number;
@@ -44,7 +44,7 @@ export const probe = async (input: string, ffprobe = 'ffprobe'): Promise<{ reado
  */
 export const encodeVideo = async (input: string, options: EncodeVideoOptions = {}): Promise<Uint8Array> => {
   const cols = options.cols ?? 160;
-  const fps = options.fps ?? 30;
+  const fps = options.fps ?? 24;
   const { width, height } = await probe(input, options.ffprobe);
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
@@ -71,7 +71,7 @@ export const encodeMicroVideo = async (input: string, output: string, options: E
   const rows = Math.max(2, Math.round((cols * (height / width) * (options.glyphAspect ?? 0.6)) / 2) * 2);
   const even = cols % 2 === 0 ? cols : cols + 1;
   const audio = options.audio === false ? ['-an'] : ['-c:a', 'aac', '-b:a', '64k'];
-  await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', '-i', input, '-vf', `fps=${options.fps ?? 30},scale=${even}:${rows}:flags=area,setsar=1`, '-c:v', 'libx264', '-crf', String(options.crf ?? 23), '-pix_fmt', 'yuv420p', '-movflags', '+faststart', ...audio, output]);
+  await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', '-i', input, '-vf', `fps=${options.fps ?? 24},scale=${even}:${rows}:flags=area,setsar=1`, '-c:v', 'libx264', '-crf', String(options.crf ?? 23), '-pix_fmt', 'yuv420p', '-movflags', '+faststart', ...audio, output]);
   return { cols: even, rows };
 };
 
@@ -81,3 +81,4 @@ export const extractAudio = (input: string, output: string, options: { readonly 
 
 export { decodeChunk, Encoder, GlyphcastError, readHeader, StreamReader } from './format.js';
 export { serve, type ServeOptions, type VideoInfo } from './serve.js';
+export { ansiFrame, playInTerminal, type TerminalOptions } from './terminal.js';

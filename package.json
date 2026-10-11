@@ -1,6 +1,6 @@
 {
   "name": "glyphcast",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Video as colored glyphs: a complete WebGL2 player with controls and PiP, and a glyph stream a server can send instead of video",
   "keywords": [
     "ascii",

@@ -1,4 +1,5 @@
 import { GlyphPlayer, sourceFor, type LookOptions, type Source } from './player.js';
+import type { RenderMode } from './renderer.js';
 
 const ICONS = {
   play: 'M8 5.5v13l11-6.5z',
@@ -19,6 +20,13 @@ const GLYPH_SETS: readonly (readonly [string, string])[] = [
   ['Плотные', " .'`^,:;Il!i~+_-?][}{1)(|tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"],
   ['Точки', ' ·•●'],
   ['Двоичные', ' 01'],
+  ['Матрица', ' ｰｨｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏ'],
+];
+
+const MODES: readonly (readonly [string, RenderMode])[] = [
+  ['Символы', 'glyphs'],
+  ['Брайль', 'braille'],
+  ['Растр', 'halftone'],
 ];
 
 const TINTS: readonly (readonly [string, string | null])[] = [
@@ -114,11 +122,12 @@ type DocumentPip = { requestWindow: (options: { width: number; height: number })
  * <glyph-player youtube="https://youtu.be/…" server="http://127.0.0.1:8787"></glyph-player>
  * ```
  *
- * Attributes: `src`, `audio`, `youtube`, `file` (a video in the server folder), `server`, `cols`, `glyphs`, `tint`, `boost`, `autolevels`, `prescaled`,
- * `autoplay`, `muted`, `loop`. The `player` property gives the underlying `GlyphPlayer`.
+ * Attributes: `src`, `audio`, `youtube`, `file` (a video in the server folder), `server`, `subtitles` (WebVTT or SRT URL),
+ * `cols`, `glyphs`, `tint`, `boost`, `autolevels`, `mode` (`glyphs`, `braille`, `halftone`), `edges`, `crt`, `autoplay`,
+ * `muted`, `loop`. The `player` property gives the underlying `GlyphPlayer`.
  */
 export class GlyphPlayerElement extends HTMLElement {
-  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'cols', 'glyphs', 'tint', 'boost', 'autolevels'];
+  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'mode', 'edges', 'crt'];
 
   readonly player: GlyphPlayer;
   private readonly root: ShadowRoot;
@@ -175,12 +184,25 @@ export class GlyphPlayerElement extends HTMLElement {
       ...(tint !== null ? { tint: tint || null } : {}),
       ...(this.hasAttribute('boost') ? { boost: Number(this.getAttribute('boost')) } : {}),
       ...(this.hasAttribute('autolevels') ? { autoLevels: this.getAttribute('autolevels') !== 'false' } : {}),
+      ...(this.hasAttribute('mode') ? { mode: this.getAttribute('mode') as RenderMode } : {}),
+      edges: this.flag('edges'),
+      crt: this.flag('crt'),
     } as LookOptions;
+  }
+
+  private flag(name: string): boolean {
+    return this.hasAttribute(name) && this.getAttribute(name) !== 'false';
+  }
+
+  private captions(): void {
+    const url = this.getAttribute('subtitles');
+    this.player.setCaptions(url ? new URL(url, document.baseURI) : null).catch((error: unknown) => this.message(error instanceof Error ? error.message : String(error)));
   }
 
   connectedCallback(): void {
     if (this.hasAttribute('muted')) this.player.muted = true;
     void this.reload();
+    if (this.hasAttribute('subtitles')) this.captions();
   }
 
   disconnectedCallback(): void {
@@ -190,6 +212,7 @@ export class GlyphPlayerElement extends HTMLElement {
   attributeChangedCallback(name: string, previous: string | null, next: string | null): void {
     if (previous === next || !this.isConnected) return;
     if (['src', 'audio', 'youtube', 'file', 'server'].includes(name)) void this.reload();
+    else if (name === 'subtitles') this.captions();
     else this.player.configure(this.look());
     this.renderMenu();
   }
@@ -417,6 +440,7 @@ export class GlyphPlayerElement extends HTMLElement {
       }));
     }
     parts.push(
+      chips('Отрисовка', MODES, look.mode ?? 'glyphs', (value) => player.configure({ mode: value as RenderMode })),
       chips('Символы', GLYPH_SETS, look.glyphs, (value) => player.configure({ glyphs: String(value) })),
       chips('Цвет', TINTS, look.tint ?? null, (value) => player.configure({ tint: (value as string | null) ?? null })),
     );
@@ -428,16 +452,25 @@ export class GlyphPlayerElement extends HTMLElement {
       const output = boost.querySelector('output');
       if (output) output.textContent = Number(slider.value).toFixed(2);
     });
-    const levels = document.createElement('button');
-    levels.className = 'toggle';
-    levels.setAttribute('role', 'switch');
-    levels.setAttribute('aria-checked', String(look.autoLevels !== false));
-    levels.innerHTML = '<span>Автояркость и контраст</span><span class="switch"></span>';
-    levels.addEventListener('click', () => {
-      player.configure({ autoLevels: look.autoLevels === false });
-      this.renderMenu();
-    });
-    menu.replaceChildren(...parts, boost, levels);
+    const toggle = (label: string, on: boolean, change: (next: boolean) => void): HTMLElement => {
+      const button = document.createElement('button');
+      button.className = 'toggle';
+      button.setAttribute('role', 'switch');
+      button.setAttribute('aria-checked', String(on));
+      button.innerHTML = `<span>${label}</span><span class="switch"></span>`;
+      button.addEventListener('click', () => {
+        change(!on);
+        this.renderMenu();
+      });
+      return button;
+    };
+    menu.replaceChildren(
+      ...parts,
+      boost,
+      toggle('Автояркость и контраст', look.autoLevels !== false, (next) => player.configure({ autoLevels: next })),
+      toggle('Контуры', look.edges === true, (next) => player.configure({ edges: next })),
+      toggle('Кинескоп', look.crt === true, (next) => player.configure({ crt: next })),
+    );
   }
 
   async toggleFullscreen(): Promise<void> {

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { NEUTRAL } from '../src/levels.js';
 import { decodeChunk, encodeMicroVideo, encodeVideo, probe, readHeader, serve, StreamReader } from '../src/node.js';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -49,5 +50,17 @@ describe.runIf(hasFfmpeg)('ffmpeg encoders', () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe('terminal', () => {
+  it('draws a frame as colored glyphs and scales it to fit', async () => {
+    const { ansiFrame } = await import('../src/terminal.js');
+    const pixels = new Uint8Array([0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255]);
+    const text = ansiFrame(pixels, 2, 2, 3, NEUTRAL);
+    const plain = text.replace(/\x1b\[[0-9;]*m/g, '');
+    expect(plain.split('\n')).toEqual([' @', expect.stringMatching(/^..$/)]);
+    expect(text).toContain('\x1b[38;2;');
+    expect(ansiFrame(pixels, 2, 2, 3, NEUTRAL, { width: 1, height: 1 }).replace(/\x1b\[[0-9;]*m/g, '')).toBe(' ');
   });
 });

@@ -1,6 +1,7 @@
 import { decodeChunk, GlyphcastError, StreamReader, type Chunk, type StreamInfo } from './format.js';
 import { autoLevels, ease, NEUTRAL, type Levels } from './levels.js';
-import { DEFAULT_GLYPHS, GlyphRenderer } from './renderer.js';
+import { captionAt, parseCaptions, type Cue } from './captions.js';
+import { DEFAULT_GLYPHS, GlyphRenderer, type RenderMode } from './renderer.js';
 
 export interface LookOptions {
   /** Grid width in glyphs for video sources; `.gcast` streams carry their own grid. Default 160. */
@@ -15,6 +16,12 @@ export interface LookOptions {
   readonly autoLevels?: boolean;
   /** Background color, CSS hex. Default `#05070a`. */
   readonly background?: string;
+  /** `glyphs`, `braille` (2×4 dots per cell) or `halftone` (a dot sized by brightness). Default `glyphs`. */
+  readonly mode?: RenderMode;
+  /** Contours drawn with `- / | \` along their direction. Default false. */
+  readonly edges?: boolean;
+  /** Tube screen look: scanlines, vignette, glow. Default false. */
+  readonly crt?: boolean;
 }
 
 export interface PlayerOptions extends LookOptions {
@@ -85,6 +92,8 @@ export class GlyphPlayer extends EventTarget {
   private rate = 1;
   private ended = false;
   private mediaClock = false;
+  private cues: readonly Cue[] = [];
+  private caption: string | null = null;
 
   constructor(readonly canvas: HTMLCanvasElement, options: PlayerOptions = {}) {
     super();
@@ -95,6 +104,9 @@ export class GlyphPlayer extends EventTarget {
       tint: options.tint ?? null,
       autoLevels: options.autoLevels ?? true,
       background: options.background ?? '#05070a',
+      mode: options.mode ?? 'glyphs',
+      edges: options.edges ?? false,
+      crt: options.crt ?? false,
     };
     this.renderer = new GlyphRenderer(canvas, { glyphs: this.look.glyphs, background: this.look.background, ...(options.glyphSize ? { glyphSize: options.glyphSize } : {}), ...(options.font ? { font: options.font } : {}) });
     const context = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
@@ -143,6 +155,26 @@ export class GlyphPlayer extends EventTarget {
     if (glyphs) this.renderer.setGlyphs(this.look.glyphs);
     if (background) this.renderer.setBackground(this.look.background);
     this.shownFrame = -1;
+    this.redraw();
+  }
+
+  /**
+   * Shows subtitles drawn with glyphs over the picture: WebVTT or SRT text, a URL to fetch it from, or null to
+   * hide them. Cues follow `currentTime`, so they stay in sync after seeks and server restarts.
+   */
+  async setCaptions(captions: string | URL | null): Promise<void> {
+    if (captions === null) this.cues = [];
+    else if (captions instanceof URL || !captions.includes('-->')) {
+      const response = await fetch(captions);
+      if (!response.ok) throw new GlyphcastError(`Cannot load subtitles: HTTP ${response.status}`);
+      this.cues = parseCaptions(await response.text());
+    } else this.cues = parseCaptions(captions);
+    this.caption = null;
+    this.renderer.setCaption(null);
+    this.redraw();
+  }
+
+  private redraw(): void {
     if (this.lastFrame && this.stream) this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
     else this.draw();
   }
@@ -408,7 +440,12 @@ export class GlyphPlayer extends EventTarget {
   private paint(pixels: Uint8ClampedArray, cols: number, rows: number): void {
     this.lastFrame = { pixels, cols, rows };
     this.levels = this.look.autoLevels ? ease(this.levels, autoLevels(pixels)) : NEUTRAL;
-    this.renderer.draw(pixels, cols, rows, { levels: this.levels, boost: this.look.boost, tint: this.look.tint });
+    const caption = captionAt(this.cues, this.currentTime);
+    if (caption !== this.caption) {
+      this.caption = caption;
+      this.renderer.setCaption(caption);
+    }
+    this.renderer.draw(pixels, cols, rows, { levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt });
   }
 
   /** Draws the frame for the current time. */

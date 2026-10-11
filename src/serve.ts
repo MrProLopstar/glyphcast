@@ -57,7 +57,7 @@ const bounded = (value: string | null, fallback: number, min: number, max: numbe
  * live `.gcast` streams with a separate Opus audio stream, so the browser receives glyph frames instead of video,
  * and serves ready `.gcast` files with range requests.
  *
- * Endpoints: `/info?url=`, `/stream?url=|file=&cols=&fps=&start=`, `/audio?url=|file=&start=`,
+ * Endpoints: `/info?url=`, `/stream?url=|file=&cols=&fps=&quality=&start=`, `/audio?url=|file=&start=`,
  * `/files/<name>`, `/health`. Needs ffmpeg, and yt-dlp for YouTube.
  */
 export const serve = (options: ServeOptions = {}): Promise<Server> => {
@@ -108,14 +108,15 @@ export const serve = (options: ServeOptions = {}): Promise<Server> => {
   const stream = async (request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> => {
     const source = await media(url);
     const cols = Math.round(bounded(url.searchParams.get('cols'), 160, 16, 480));
-    const fps = bounded(url.searchParams.get('fps'), 30, 1, 60);
+    const fps = bounded(url.searchParams.get('fps'), 24, 1, 60);
+    const threshold = Math.round(bounded(url.searchParams.get('quality'), 3, 0, 8));
     const start = bounded(url.searchParams.get('start'), 0, 0, 1e6);
     const rows = Math.max(1, Math.round(cols * (9 / 16) * 0.6));
     const aspect = await capture(ffmpeg.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1'), ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', source.video]).catch(() => '');
     const [width, height] = aspect.trim().split(',').map(Number);
     const gridRows = width && height ? Math.max(1, Math.round(cols * (height / width) * 0.6)) : rows;
     response.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-glyphcast-duration': String(source.info.duration) });
-    const encoder = new Encoder({ cols, rows: gridRows, fps, chunkFrames: Math.max(1, Math.round(fps)), frameCount: source.info.duration ? Math.max(0, Math.round((source.info.duration - start) * fps)) : 0 }, (bytes) => response.write(bytes));
+    const encoder = new Encoder({ cols, rows: gridRows, fps, chunkFrames: Math.max(1, Math.round(fps)), threshold, frameCount: source.info.duration ? Math.max(0, Math.round((source.info.duration - start) * fps)) : 0 }, (bytes) => response.write(bytes));
     const frameSize = cols * gridRows * 3;
     let pending: Buffer = Buffer.alloc(0);
     const child = spawn(ffmpeg, ['-v', 'error', '-ss', String(start), '-i', source.video, '-an', '-vf', `fps=${fps},scale=${cols}:${gridRows}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
