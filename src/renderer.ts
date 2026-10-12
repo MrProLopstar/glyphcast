@@ -77,7 +77,17 @@ float bayer(vec2 spot) {
   return matrix[index];
 }
 void main() {
-  vec2 position = uv * grid;
+  vec2 at = uv;
+  if (crt > 0.5) {
+    vec2 centered = uv * 2.0 - 1.0;
+    centered *= 1.0 + dot(centered.yx, centered.yx) * 0.07;
+    at = centered * 0.5 + 0.5;
+    if (any(lessThan(at, vec2(0.0))) || any(greaterThan(at, vec2(1.0)))) {
+      color = vec4(0.0, 0.0, 0.0, 1.0);
+      return;
+    }
+  }
+  vec2 position = at * grid;
   vec2 cell = floor(position);
   vec2 local = fract(position);
   vec3 source = texelFetch(cells, ivec2(cell), 0).rgb;
@@ -110,13 +120,13 @@ void main() {
   }
   vec3 result = mix(background, glyph, ink);
   if (crt > 0.5) {
-    result += paint(source, level) * 0.12;
-    result *= 0.78 + 0.22 * sin(gl_FragCoord.y * PI * 0.5);
-    vec2 center = uv - 0.5;
-    result *= 1.0 - dot(center, center) * 0.9;
+    result += paint(source, level) * 0.22;
+    result *= 0.6 + 0.4 * abs(sin(position.y * PI * 2.0));
+    vec2 center = at - 0.5;
+    result *= 1.0 - dot(center, center) * 1.6;
   }
   if (captions > 0.5) {
-    vec4 text = texture(overlay, uv);
+    vec4 text = texture(overlay, at);
     result = mix(result, text.rgb, text.a);
   }
   color = vec4(result, 1.0);

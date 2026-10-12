@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- Tube screen look is visible at any size: scanlines follow the glyph rows, the screen bulges and the edges darken
+
 ## 0.3.1
 
 - Streams are read at most 20 seconds ahead with low fetch priority, so audio starts at once on slow connections instead of after the whole file
