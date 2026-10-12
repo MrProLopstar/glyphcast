@@ -21,6 +21,8 @@ export interface EncodeVideoOptions {
   readonly ffprobe?: string;
   /** Embed the sound as Opus inside the stream (`encodeVideo` only). Default false. */
   readonly embedAudio?: boolean;
+  /** Called as frames are encoded with the seconds done and the total, for progress output. */
+  readonly onProgress?: (done: number, total: number) => void;
 }
 
 const run = (command: string, args: readonly string[], onData?: (chunk: Buffer) => void): Promise<string> =>
@@ -50,8 +52,9 @@ export const probe = async (input: string, ffprobe = 'ffprobe'): Promise<{ reado
 export const encodeVideo = async (input: string, options: EncodeVideoOptions = {}): Promise<Uint8Array> => {
   const cols = options.cols ?? 160;
   const fps = options.fps ?? 24;
-  const { width, height } = await probe(input, options.ffprobe);
+  const { width, height, duration } = await probe(input, options.ffprobe);
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
+  let frames = 0;
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
   if (options.embedAudio) {
     const temp = mkdtempSync(join(tmpdir(), 'glyphcast-'));
@@ -69,6 +72,8 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
     while (pending.length >= frameSize) {
       encoder.add(pending.subarray(0, frameSize));
       pending = pending.subarray(frameSize);
+      frames += 1;
+      if (frames % fps === 0) options.onProgress?.(frames / fps, duration);
     }
   });
   return encoder.finish();
@@ -87,6 +92,12 @@ export const encodeMicroVideo = async (input: string, output: string, options: E
   const audio = options.audio === false ? ['-an'] : ['-c:a', 'aac', '-b:a', '64k'];
   await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', '-i', input, '-vf', `fps=${options.fps ?? 24},scale=${even}:${rows}:flags=area,setsar=1`, '-c:v', 'libx264', '-crf', String(options.crf ?? 23), '-pix_fmt', 'yuv420p', '-movflags', '+faststart', ...audio, output]);
   return { cols: even, rows };
+};
+
+/** Saves one frame as an image for the player's `poster`, by default from a tenth into the video. */
+export const extractPoster = async (input: string, output: string, options: { readonly at?: number; readonly width?: number; readonly ffmpeg?: string; readonly ffprobe?: string } = {}): Promise<string> => {
+  const at = options.at ?? (await probe(input, options.ffprobe)).duration * 0.1;
+  return run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', '-ss', String(at), '-i', input, '-frames:v', '1', '-vf', `scale=${options.width ?? 960}:-2`, output]);
 };
 
 /** Extracts the audio track for a stream: AAC for `.m4a`, which every browser plays, or Opus for `.opus` and `.ogg`. */

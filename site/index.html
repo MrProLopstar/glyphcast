@@ -56,6 +56,8 @@ button:disabled { opacity: 0.45; cursor: default; border-color: var(--line); }
 .sizes strong { font: 700 22px/1.2 var(--mono); }
 .sizes .win strong { color: var(--accent); }
 .result { display: grid; gap: 10px; }
+.command { display: flex; gap: 8px; align-items: stretch; }
+.command pre { flex: 1; min-width: 0; margin: 0; padding: 9px 12px; }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .row input[type="url"] { flex: 1; min-width: 220px; }
 .row input[type="file"] { display: none; }
@@ -82,7 +84,7 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
   </header>
 
 
-  <glyph-player id="player" src="./onepiece.gcast" cols="160"></glyph-player>
+  <glyph-player id="player" src="./onepiece.gcast" poster="./onepiece.jpg" mode="braille" cols="160"></glyph-player>
 
   <section class="sources">
     <div class="row">
@@ -108,6 +110,11 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
       <label class="field"><input id="convert-audio" type="checkbox" checked> Вшить звук</label>
       <button id="convert-start" type="button" disabled>Конвертировать</button>
     </div>
+    <div class="command">
+      <pre id="convert-command">npx glyphcast encode video.mp4 --cols 160 --fps 24 --embed --poster</pre>
+      <button id="convert-copy" type="button">Скопировать</button>
+    </div>
+    <p class="status">Та же конвертация в консоли (нужен ffmpeg): быстрее, без ограничений по размеру и со звуком для целых фильмов. Рядом появится постер <code>.jpg</code>.</p>
     <div class="bar" hidden><div></div></div>
     <p class="status" id="convert-status"></p>
     <div class="result" hidden>
@@ -141,7 +148,6 @@ import 'glyphcast/element';
 </main>
 <script type="module">
 import './lib/element.js';
-import { Encoder, frameChunk, HEADER_SIZE } from './lib/format.js';
 
 const player = document.getElementById('player');
 const $ = (id) => document.getElementById(id);
@@ -184,8 +190,21 @@ const megabytes = (bytes) => `${(bytes / 1048576).toLocaleString('ru-RU', { maxi
 let source = null;
 let output = null;
 
+const command = () => {
+  const name = source ? source.name : 'video.mp4';
+  const quoted = /[\s"'&()]/.test(name) ? `"${name.replace(/"/g, '\\"')}"` : name;
+  $('convert-command').textContent = `npx glyphcast encode ${quoted} --cols ${$('convert-cols').value} --fps ${$('convert-fps').value}${$('convert-audio').checked ? ' --embed' : ''} --poster`;
+};
+for (const id of ['convert-cols', 'convert-fps', 'convert-audio']) $(id).addEventListener('change', command);
+$('convert-copy').addEventListener('click', async () => {
+  await navigator.clipboard.writeText($('convert-command').textContent);
+  $('convert-copy').textContent = 'Скопировано';
+  setTimeout(() => ($('convert-copy').textContent = 'Скопировать'), 1500);
+});
+
 $('convert-file').addEventListener('change', (event) => {
   source = event.target.files?.[0] ?? null;
+  command();
   $('convert-start').disabled = !source;
   $('convert-status').textContent = source ? `${source.name}, ${megabytes(source.size)}` : '';
 });
@@ -295,7 +314,13 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   const rows = Math.max(1, Math.round(cols * (video.videoHeight / video.videoWidth) * 0.6));
   const canvas = new OffscreenCanvas(cols, rows);
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.round(fps * 2) });
+  const worker = new Worker('./encode-worker.js', { type: 'module' });
+  worker.postMessage({ type: 'start', options: { cols, rows, fps, chunkFrames: Math.round(fps * 2) } });
+  const encoded = new Promise((resolve, reject) => {
+    worker.addEventListener('message', ({ data }) => (data.error ? reject(new Error(data.error)) : resolve(data.bytes)));
+    worker.addEventListener('error', () => reject(new Error('Кодировщик не запустился')));
+  });
+  encoded.catch(() => undefined);
   const large = file.size > 300 * 1048576 || video.duration > 1200;
   const fast = withAudio && !large && 'AudioEncoder' in window;
   const record = withAudio && !large && !fast;
@@ -306,10 +331,10 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   const capture = (time) => {
     context.drawImage(video, 0, 0, cols, rows);
     const pixels = context.getImageData(0, 0, cols, rows).data;
-    while (written / fps <= time) {
-      encoder.add(pixels);
-      written += 1;
-    }
+    let repeat = 0;
+    while ((written + repeat) / fps <= time) repeat += 1;
+    if (repeat > 0) worker.postMessage({ type: 'frame', pixels: pixels.buffer, repeat }, [pixels.buffer]);
+    written += repeat;
     progress(time / video.duration);
   };
   video.playbackRate = stopAudio ? 1 : 4;
@@ -319,12 +344,14 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   await finished;
   clearInterval(timer);
   capture(video.duration);
-  const stream = await encoder.finish();
   URL.revokeObjectURL(video.src);
   const sound = (stopAudio ? await stopAudio() : await quickSound) ?? new Uint8Array(0);
-  const pieces = [];
-  for (let at = 0; at < sound.length; at += 65536) pieces.push(frameChunk({ start: 0, frames: 0, data: sound.subarray(at, at + 65536) }));
-  return { bytes: new Blob([stream.subarray(0, HEADER_SIZE), ...pieces, stream.subarray(HEADER_SIZE)]), sound: sound.length, cols, rows, droppedSound: withAudio && large };
+  const soundSize = sound.length;
+  if (soundSize > 0) worker.postMessage({ type: 'audio', bytes: sound.buffer }, [sound.buffer]);
+  worker.postMessage({ type: 'finish' });
+  const stream = await encoded;
+  worker.terminate();
+  return { bytes: new Blob([stream]), sound: soundSize, cols, rows, droppedSound: withAudio && large };
 };
 
 $('convert-start').addEventListener('click', async () => {

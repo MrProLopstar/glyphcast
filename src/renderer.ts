@@ -100,10 +100,11 @@ void main() {
   if (mode == 1) {
     vec2 spot = floor(local * vec2(2.0, 4.0));
     vec3 near = texture(cells, (cell + (spot + 0.5) / vec2(2.0, 4.0)) / grid).rgb;
-    float lit = step(bayer(spot), leveled(dot(near, WEIGHTS)));
+    float nearLevel = leveled(dot(near, WEIGHTS));
+    float lit = step(bayer(spot) * 0.75, nearLevel);
     vec2 inside = (fract(local * vec2(2.0, 4.0)) - 0.5) * vec2(1.2, 1.0);
-    ink = lit * smoothstep(0.42, 0.3, length(inside));
-    glyph = paint(near, level);
+    ink = lit * smoothstep(0.5, 0.36, length(inside));
+    glyph = min(paint(near, max(level, nearLevel)) * 1.3, vec3(1.0));
   } else if (mode == 2) {
     float radius = sqrt(level) * 0.46;
     float distance = length((local - 0.5) * vec2(0.6, 1.0));

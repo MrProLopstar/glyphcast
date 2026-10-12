@@ -3,14 +3,15 @@ import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { parseArgs } from 'node:util';
 import { StreamReader } from './format.js';
-import { encodeMicroVideo, encodeVideo, extractAudio } from './node.js';
+import { encodeMicroVideo, encodeVideo, extractAudio, extractPoster } from './node.js';
 import { serve } from './serve.js';
 import { playInTerminal } from './terminal.js';
 
 const USAGE = `glyphcast: video as glyphs
 
-  glyphcast encode <video> [--out file.gcast] [--cols 160] [--fps 24] [--threshold 3] [--embed | --audio file.m4a] [--chunk 2]
-      --embed puts Opus sound inside the .gcast, --audio writes it to a separate file
+  glyphcast encode <video...> [--out file.gcast] [--cols 160] [--fps 24] [--threshold 3] [--embed | --audio file.m4a] [--poster] [--chunk 2]
+      --embed puts Opus sound inside the .gcast, --audio writes it to a separate file,
+      --poster saves a frame as <name>.jpg for the player; several videos are encoded one by one
   glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
   glyphcast play <file.gcast | stream URL | video> [--cols width]
       plays in the terminal with 24-bit color glyphs
@@ -32,6 +33,7 @@ const main = async (): Promise<void> => {
       chunk: { type: 'string' },
       threshold: { type: 'string' },
       embed: { type: 'boolean' },
+      poster: { type: 'boolean' },
       audio: { type: 'string' },
       port: { type: 'string' },
       dir: { type: 'string' },
@@ -42,6 +44,7 @@ const main = async (): Promise<void> => {
     },
   });
   const [command, input] = positionals;
+  const inputs = positionals.slice(1);
   if (command === 'serve') {
     const port = values.port ? Number(values.port) : 8787;
     await serve({ port, ...(values.dir ? { dir: values.dir } : {}), youtube: !values['no-youtube'], ...(values['yt-dlp'] ? { ytDlp: values['yt-dlp'] } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}), onRequest: (line) => console.log(line) });
@@ -74,15 +77,34 @@ const main = async (): Promise<void> => {
     return;
   }
   if (command !== 'encode') throw new Error(`Unknown command "${command}"`);
-  const out = values.out ?? `${basename(input, extname(input))}.gcast`;
+  if (values.out && inputs.length > 1) throw new Error('--out works with one video; several are saved next to the current folder by name');
+  for (const video of inputs) await encode(video, values.out ?? `${basename(video, extname(video))}.gcast`, values);
+};
+
+const clock = (seconds: number): string => {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const rest = `${String(Math.floor((total % 3600) / 60)).padStart(hours ? 2 : 1, '0')}:${String(total % 60).padStart(2, '0')}`;
+  return hours ? `${hours}:${rest}` : rest;
+};
+
+const encode = async (input: string, out: string, values: { readonly cols?: string; readonly fps?: string; readonly chunk?: string; readonly threshold?: string; readonly embed?: boolean; readonly poster?: boolean; readonly audio?: string }): Promise<void> => {
   const started = performance.now();
+  const live = process.stdout.isTTY;
   const bytes = await encodeVideo(input, {
+    onProgress: (done, total) => {
+      if (!live || !total) return;
+      const share = Math.min(1, done / total);
+      const elapsed = (performance.now() - started) / 1000;
+      process.stdout.write(`\r${basename(input)}: ${(share * 100).toFixed(1)}% (${clock(done)} / ${clock(total)}), ${(done / elapsed).toFixed(1)}× real time, about ${clock((elapsed / share) * (1 - share))} left   `);
+    },
     ...(values.cols ? { cols: Number(values.cols) } : {}),
     ...(values.fps ? { fps: Number(values.fps) } : {}),
     ...(values.chunk ? { chunkSeconds: Number(values.chunk) } : {}),
     ...(values.threshold ? { threshold: Number(values.threshold) } : {}),
     ...(values.embed ? { embedAudio: true } : {}),
   });
+  if (live) process.stdout.write('\r\x1b[K');
   writeFileSync(out, bytes);
   const reader = new StreamReader();
   reader.push(bytes);
@@ -93,6 +115,11 @@ const main = async (): Promise<void> => {
   if (values.audio) {
     await extractAudio(input, values.audio);
     console.log(`${values.audio}: ${kb(statSync(values.audio).size)}`);
+  }
+  if (values.poster) {
+    const image = out.replace(/\.gcast$/i, '') + '.jpg';
+    await extractPoster(input, image);
+    console.log(`${image}: ${kb(statSync(image).size)}, use it as poster="${basename(image)}"`);
   }
 };
 

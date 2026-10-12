@@ -44,7 +44,9 @@ const STYLE = `
 :host { display: block; position: relative; --accent: #f0a04b; --ink: #f4f6f8; --panel: rgba(12, 15, 20, 0.86); color-scheme: dark; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .player { position: relative; container-type: inline-size; width: 100%; aspect-ratio: var(--ratio, 16 / 9); background: #000; border-radius: var(--radius, 12px); overflow: hidden; outline: none; user-select: none; color: var(--ink); }
 :host(:fullscreen) .player, .player.pip { border-radius: 0; height: 100%; aspect-ratio: auto; }
-canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+canvas, .poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.poster { pointer-events: none; transition: opacity 0.3s; }
+.poster.gone { opacity: 0; }
 button { all: unset; cursor: pointer; display: grid; place-items: center; border-radius: 8px; color: inherit; }
 button:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 svg { width: 22px; height: 22px; fill: currentColor; }
@@ -132,12 +134,12 @@ type DocumentPip = { requestWindow: (options: { width: number; height: number })
  * <glyph-player youtube="https://youtu.be/…" server="http://127.0.0.1:8787"></glyph-player>
  * ```
  *
- * Attributes: `src`, `audio`, `youtube`, `file` (a video in the server folder), `server`, `subtitles` (WebVTT or SRT URL),
+ * Attributes: `src`, `poster` (image shown until the first frame), `audio`, `youtube`, `file` (a video in the server folder), `server`, `subtitles` (WebVTT or SRT URL),
  * `cols`, `glyphs`, `tint`, `boost`, `autolevels`, `mode` (`glyphs`, `braille`, `halftone`), `edges`, `crt`, `autoplay`,
  * `muted`, `loop`. The `player` property gives the underlying `GlyphPlayer`.
  */
 export class GlyphPlayerElement extends HTMLElement {
-  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt'];
+  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'poster', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt'];
 
   readonly player: GlyphPlayer;
   private readonly root: ShadowRoot;
@@ -155,6 +157,7 @@ export class GlyphPlayerElement extends HTMLElement {
     this.root.innerHTML = `<style>${STYLE}</style>
 <div class="player" tabindex="0">
   <canvas part="canvas"></canvas>
+  <img class="poster gone" part="poster" alt="">
   <div class="badge" hidden></div>
   <div class="center"><button class="big" aria-label="Play">${icon(ICONS.play)}</button></div>
   <div class="spinner"></div>
@@ -237,9 +240,11 @@ export class GlyphPlayerElement extends HTMLElement {
     const ticket = (this.loading += 1);
     this.message(null);
     this.frame.classList.add('waiting');
+    this.poster(true);
     try {
       await this.player.load(resolved);
       if (ticket !== this.loading) return;
+      this.poster(false);
       this.updateRatio();
       this.renderMenu();
       this.update();
@@ -272,6 +277,13 @@ export class GlyphPlayerElement extends HTMLElement {
     const src = this.getAttribute('src');
     this.badge(null);
     if (src) await this.load(src);
+  }
+
+  private poster(show: boolean): void {
+    const image = this.$('.poster') as HTMLImageElement;
+    const url = this.getAttribute('poster');
+    if (url && image.getAttribute('src') !== url) image.src = url;
+    image.classList.toggle('gone', !show || !url);
   }
 
   private badge(text: string | null): void {

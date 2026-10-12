@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Seeking past the loaded part: files end with a chunk index, and the player fetches the needed place with a range request
+- `poster` attribute, `--poster` and `extractPoster()` save a frame for it
+- `glyphcast/react` and `glyphcast/vue` wrappers with typed props and events, server rendering safe
+- CLI encodes several videos in a row and shows progress with time left; `glyphcast serve` answers suffix ranges correctly
+- `Encoder.addAudio()` also works after frames; `finish()` puts the sound first
+- Brighter braille mode; the playground converter encodes in a Web Worker and shows the console command
+
 ## 0.4.1
 
 - Softer picture on large screens: cell backgrounds take a dim version of their color (`fill`, slider in settings), small frame-to-frame jitter is smoothed out, glyphs are semibold

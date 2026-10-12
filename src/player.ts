@@ -1,4 +1,4 @@
-import { audioType, decodeChunk, GlyphcastError, StreamReader, type Chunk, type StreamInfo } from './format.js';
+import { audioType, decodeChunk, GlyphcastError, indexLength, INDEX_TRAILER, readIndex, type IndexEntry, StreamReader, type Chunk, type StreamInfo } from './format.js';
 import { autoLevels, ease, NEUTRAL, type Levels } from './levels.js';
 import { captionAt, parseCaptions, type Cue } from './captions.js';
 import { DEFAULT_GLYPHS, GlyphRenderer, type RenderMode } from './renderer.js';
@@ -70,6 +70,11 @@ interface StreamState {
   readonly abort: AbortController;
   /** Second at which this download starts (non-zero after a server restart). */
   readonly offset: number;
+  readonly url: string;
+  /** Cancels the running download; replaced when seeking jumps past loaded data. */
+  segment: AbortController;
+  /** Chunk positions from the file's index, for jumping with range requests. */
+  index: IndexEntry[] | null;
   done: boolean;
   clockStart: number;
   clockAt: number;
@@ -231,7 +236,8 @@ export class GlyphPlayer extends EventTarget {
 
   private async openStream(source: Extract<Source, { type: 'gcast' }>, offset: number): Promise<void> {
     const urls = offset > 0 && source.restart ? source.restart(offset) : { src: source.src, ...(source.audio ? { audio: source.audio } : {}) };
-    const state: StreamState = { source, reader: new StreamReader(), chunks: [], decoded: new Map(), abort: new AbortController(), offset, done: false, clockStart: 0, clockAt: 0 };
+    const state: StreamState = { source, reader: new StreamReader(), chunks: [], decoded: new Map(), abort: new AbortController(), offset, url: urls.src, segment: new AbortController(), index: null, done: false, clockStart: 0, clockAt: 0 };
+    state.abort.signal.addEventListener('abort', () => state.segment.abort());
     this.stream = state;
     this.stalled = false;
     this.shownFrame = -1;
@@ -242,44 +248,107 @@ export class GlyphPlayer extends EventTarget {
     } else {
       this.media.removeAttribute('src');
     }
-    const response = await fetch(urls.src, { signal: state.abort.signal, priority: 'low' } as RequestInit);
+    const response = await fetch(urls.src, { signal: state.segment.signal, priority: 'low' } as RequestInit);
     if (!response.ok || !response.body) throw new GlyphcastError(`Cannot load ${urls.src}: HTTP ${response.status}`);
-    const reader = response.body.getReader();
-    const first = new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const sound: Uint8Array[] = [];
-      const pump = async (): Promise<void> => {
-        for (;;) {
-          while (!state.abort.signal.aborted && this.stream === state && this.bufferedEnd - this.currentTime > AHEAD) await new Promise((wait) => setTimeout(wait, 250));
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunks = state.reader.push(value);
-          for (const chunk of chunks) {
-            if (chunk.frames > 0) state.chunks.push(chunk);
-            else sound.push(chunk.data);
-          }
-          if (sound.length > 0 && state.chunks.length > 0 && !this.mediaClock) {
-            this.media.src = URL.createObjectURL(new Blob(sound as BlobPart[], { type: audioType(sound[0] ?? new Uint8Array()) }));
-            this.mediaClock = true;
-          }
-          if (state.reader.info && state.chunks.length > 0) resolve();
-          if (chunks.length > 0) this.emit('progress');
+      this.download(state, response, state.reader, state.segment, (chunks) => {
+        for (const chunk of chunks) if (chunk.frames === 0) sound.push(chunk.data);
+        if (sound.length > 0 && state.chunks.length > 0 && !this.mediaClock) {
+          this.media.src = URL.createObjectURL(new Blob(sound as BlobPart[], { type: audioType(sound[0] ?? new Uint8Array()) }));
+          this.mediaClock = true;
         }
-        state.done = true;
+        if (state.reader.info && state.chunks.length > 0) resolve();
+      }).then(() => {
         if (!state.reader.info) throw new GlyphcastError('The stream ended before its header');
         resolve();
-        this.emit('progress');
-        this.emit('durationchange');
-      };
-      pump().catch((error: unknown) => {
+      }).catch((error: unknown) => {
         if (state.abort.signal.aborted) return;
         reject(error);
         this.fail(error instanceof Error ? error : new GlyphcastError(String(error)));
       });
     });
-    await first;
     this.emit('loadedmetadata');
     this.emit('durationchange');
     this.draw();
+    if (!state.done && !source.restart && !urls.src.startsWith('blob:')) void this.loadIndex(state);
+  }
+
+  private async download(state: StreamState, response: Response, reader: StreamReader, segment: AbortController, onChunks?: (chunks: Chunk[]) => void): Promise<void> {
+    const body = response.body?.getReader();
+    if (!body) return;
+    for (;;) {
+      while (!segment.signal.aborted && this.stream === state && this.bufferedEnd - this.currentTime > AHEAD) await new Promise((wait) => setTimeout(wait, 250));
+      if (segment.signal.aborted) return;
+      const { done, value } = await body.read();
+      if (done) break;
+      const chunks = reader.push(value);
+      for (const chunk of chunks) if (chunk.frames > 0) this.store(state, chunk);
+      onChunks?.(chunks);
+      if (chunks.length > 0) this.emit('progress');
+    }
+    state.done = true;
+    this.emit('progress');
+    this.emit('durationchange');
+  }
+
+  private store(state: StreamState, chunk: Chunk): void {
+    const chunks = state.chunks;
+    let at = chunks.length;
+    while (at > 0 && (chunks[at - 1]?.start ?? 0) > chunk.start) at -= 1;
+    if (chunks[at - 1]?.start === chunk.start) return;
+    chunks.splice(at, 0, chunk);
+  }
+
+  private async loadIndex(state: StreamState): Promise<void> {
+    try {
+      const tail = await fetch(state.url, { headers: { range: `bytes=-${INDEX_TRAILER}` }, signal: state.abort.signal });
+      if (tail.status !== 206) return;
+      const length = indexLength(new Uint8Array(await tail.arrayBuffer()));
+      if (!length) return;
+      const chunk = await fetch(state.url, { headers: { range: `bytes=-${length}` }, signal: state.abort.signal });
+      if (chunk.status === 206) state.index = readIndex(new Uint8Array(await chunk.arrayBuffer()));
+    } catch {
+      state.index = null;
+    }
+  }
+
+  private async jump(state: StreamState, frame: number): Promise<void> {
+    const entry = state.index?.find((item) => frame >= item.start && frame < item.start + item.frames);
+    const info = state.reader.info;
+    if (!entry || !info || state.chunks.some((chunk) => chunk.start === entry.start)) return;
+    state.segment.abort();
+    const segment = new AbortController();
+    state.segment = segment;
+    try {
+      const response = await fetch(state.url, { headers: { range: `bytes=${entry.offset}-` }, signal: segment.signal, priority: 'low' } as RequestInit);
+      if (response.status !== 206) {
+        segment.abort();
+        return;
+      }
+      await this.download(state, response, new StreamReader(info, entry.start), segment);
+    } catch (error) {
+      if (!segment.signal.aborted) this.fail(error instanceof Error ? error : new GlyphcastError(String(error)));
+    }
+  }
+
+  private regionEnd(stream: StreamState): number {
+    const info = stream.reader.info;
+    if (!info) return 0;
+    const frame = Math.max(0, Math.floor((this.currentTime - stream.offset) * info.fps));
+    let at = stream.chunks.findIndex((chunk) => frame >= chunk.start && frame < chunk.start + chunk.frames);
+    if (at < 0) return frame;
+    let end = (stream.chunks[at]?.start ?? 0) + (stream.chunks[at]?.frames ?? 0);
+    while (stream.chunks[at + 1]?.start === end) {
+      at += 1;
+      end += stream.chunks[at]?.frames ?? 0;
+    }
+    return end;
+  }
+
+  private reachesEnd(stream: StreamState): boolean {
+    const total = stream.reader.info?.frameCount ?? 0;
+    return total > 0 ? this.regionEnd(stream) >= total : stream.done;
   }
 
   private unload(): void {
@@ -332,7 +401,7 @@ export class GlyphPlayer extends EventTarget {
   /** End of the downloaded part, in seconds. */
   get bufferedEnd(): number {
     const stream = this.stream;
-    if (stream) return stream.reader.info ? stream.offset + stream.chunks.reduce((sum, chunk) => sum + chunk.frames, 0) / stream.reader.info.fps : stream.offset;
+    if (stream) return stream.reader.info ? stream.offset + this.regionEnd(stream) / stream.reader.info.fps : stream.offset;
     const ranges = this.media.buffered;
     return ranges.length > 0 ? ranges.end(ranges.length - 1) : 0;
   }
@@ -429,6 +498,7 @@ export class GlyphPlayer extends EventTarget {
       return;
     }
     if (this.hasAudio) this.media.currentTime = time - stream.offset;
+    if (info && !stream.source.restart) void this.jump(stream, Math.floor((time - stream.offset) * info.fps));
     stream.clockAt = time;
     stream.clockStart = performance.now();
     this.shownFrame = -1;
@@ -455,7 +525,7 @@ export class GlyphPlayer extends EventTarget {
       }
       const stream = this.stream;
       if (stream && this.hasAudio) this.buffer(stream);
-      if (stream?.done && stream.reader.info && this.currentTime >= this.duration - 0.02) {
+      if (stream?.reader.info && this.currentTime >= this.duration - 0.02 && this.reachesEnd(stream)) {
         if (this.hasAudio) this.media.pause();
         this.finish();
         return;
@@ -467,11 +537,12 @@ export class GlyphPlayer extends EventTarget {
 
   private buffer(stream: StreamState): void {
     const ahead = this.bufferedEnd - this.currentTime;
-    if (!this.stalled && !stream.done && ahead < 0.3) {
+    const end = this.reachesEnd(stream);
+    if (!this.stalled && !end && ahead < 0.3) {
       this.stalled = true;
       this.media.pause();
       this.emit('waiting');
-    } else if (this.stalled && (stream.done || ahead > 2)) {
+    } else if (this.stalled && (end || ahead > 2)) {
       this.stalled = false;
       void this.media.play().catch(() => undefined);
       this.emit('playing');

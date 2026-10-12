@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { audioType, decodeChunk, Encoder, GlyphcastError, readHeader, StreamReader, type Chunk } from '../src/format.js';
+import { audioType, decodeChunk, Encoder, GlyphcastError, INDEX_TRAILER, indexLength, readHeader, readIndex, StreamReader, type Chunk } from '../src/format.js';
 import { captionAt, parseCaptions } from '../src/captions.js';
 import { autoLevels, glyphIndex, luma, NEUTRAL } from '../src/levels.js';
 
@@ -156,10 +156,37 @@ describe('embedded audio', () => {
     sound.set([0x4f, 0x67, 0x67, 0x53]);
     encoder.addAudio(sound);
     encoder.add(frame(0));
-    expect(() => encoder.addAudio(sound)).toThrow(GlyphcastError);
     const chunks = split(await encoder.finish());
     expect(chunks.map((chunk) => chunk.frames)).toEqual([0, 0, 1]);
+    const late = new Encoder({ cols, rows, fps: 10, chunkFrames: 2 });
+    late.add(frame(0));
+    late.add(frame(1));
+    late.addAudio(sound);
+    const bytes = await late.finish();
+    expect(split(bytes).map((chunk) => chunk.frames)).toEqual([0, 0, 2]);
+    const length = indexLength(bytes.subarray(bytes.length - INDEX_TRAILER)) ?? 0;
+    const [entry] = readIndex(bytes.subarray(bytes.length - length));
+    expect(new StreamReader(readHeader(bytes), 0).push(bytes.subarray(entry?.offset ?? 0)).map((chunk) => chunk.frames)).toEqual([2]);
     expect(chunks.slice(0, 2).reduce((sum, chunk) => sum + chunk.data.length, 0)).toBe(70000);
     expect(audioType(chunks[0]?.data ?? new Uint8Array())).toBe('audio/ogg');
+  });
+});
+
+describe('chunk index', () => {
+  it('lets a reader start from any chunk found through the trailer', async () => {
+    const encoder = new Encoder({ cols, rows, fps: 10, chunkFrames: 3 });
+    for (let index = 0; index < 8; index += 1) encoder.add(frame(index));
+    const bytes = await encoder.finish();
+    const length = indexLength(bytes.subarray(bytes.length - INDEX_TRAILER));
+    expect(length).toBeGreaterThan(0);
+    const entries = readIndex(bytes.subarray(bytes.length - (length ?? 0)));
+    expect(entries.map((entry) => [entry.start, entry.frames])).toEqual([[0, 3], [3, 3], [6, 2]]);
+    expect(split(bytes).map((chunk) => chunk.frames)).toEqual([3, 3, 2]);
+    const header = readHeader(bytes);
+    const middle = new StreamReader(header, 3).push(bytes.subarray(entries[1]?.offset ?? 0));
+    expect(middle.map((chunk) => [chunk.start, chunk.frames])).toEqual([[3, 3], [6, 2]]);
+    const [whole] = split(bytes).slice(1);
+    expect(await decodeChunk(header, middle[0]?.data ?? new Uint8Array())).toEqual(await decodeChunk(header, whole?.data ?? new Uint8Array()));
+    expect(indexLength(new Uint8Array(8))).toBeNull();
   });
 });

@@ -148,8 +148,9 @@ export const serve = (options: ServeOptions = {}): Promise<Server> => {
     const type = TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream';
     const range = /bytes=(\d*)-(\d*)/.exec(request.headers.range ?? '');
     if (range) {
-      const start = range[1] ? Number(range[1]) : 0;
-      const end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+      const suffix = !range[1] && range[2];
+      const start = suffix ? Math.max(0, size - Number(range[2])) : Number(range[1] || 0);
+      const end = range[2] && !suffix ? Math.min(Number(range[2]), size - 1) : size - 1;
       response.writeHead(206, { 'content-type': type, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1, 'accept-ranges': 'bytes' });
       createReadStream(path, { start, end }).pipe(response);
       return;

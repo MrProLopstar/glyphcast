@@ -2,6 +2,18 @@ export const MAGIC = 0x54534347;
 export const VERSION = 3;
 export const HEADER_SIZE = 20;
 const CHUNK_HEAD = 6;
+const INDEX_FRAMES = 0xffff;
+const INDEX_MAGIC = 0x58444947;
+/** Bytes at the end of a file that point to its chunk index. */
+export const INDEX_TRAILER = 8;
+
+/** Where a chunk of frames starts in a file, for seeking with range requests. */
+export interface IndexEntry {
+  /** Byte offset of the chunk head from the start of the file. */
+  readonly offset: number;
+  readonly start: number;
+  readonly frames: number;
+}
 
 export interface StreamInfo {
   readonly cols: number;
@@ -241,6 +253,12 @@ export class StreamReader {
   private length = 0;
   private frames = 0;
 
+  /** Pass `info` and the first frame index to read from the middle of a file, after a range request. */
+  constructor(info?: StreamInfo, start = 0) {
+    this.info = info ?? null;
+    this.frames = start;
+  }
+
   push(bytes: Uint8Array): Chunk[] {
     if (this.length + bytes.length > this.buffer.length) {
       const grown = new Uint8Array(Math.max(this.buffer.length * 2, this.length + bytes.length, 1 << 16));
@@ -261,6 +279,10 @@ export class StreamReader {
       const size = view.getUint32(0, true);
       const frames = view.getUint16(4, true);
       if (this.length - at - CHUNK_HEAD < size) break;
+      if (frames === INDEX_FRAMES) {
+        at += CHUNK_HEAD + size;
+        continue;
+      }
       chunks.push({ start: this.frames, frames, data: this.buffer.slice(at + CHUNK_HEAD, at + CHUNK_HEAD + size) });
       this.frames += frames;
       at += CHUNK_HEAD + size;
@@ -290,6 +312,7 @@ export class Encoder {
   private chunkStart = 0;
   private queue: Promise<void> = Promise.resolve();
   private readonly finished: Uint8Array[] = [];
+  private readonly lateAudio: Uint8Array[] = [];
 
   constructor(options: EncodeOptions, private readonly onChunk?: (bytes: Uint8Array) => void) {
     this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0, threshold: options.threshold ?? 3 };
@@ -307,11 +330,14 @@ export class Encoder {
 
   /**
    * Embeds an audio file (Ogg or WebM Opus, M4A, MP3) before the first frame. Players read it first and use it as
-   * the clock, so a single `.gcast` carries picture and sound.
+   * the clock, so a single `.gcast` carries picture and sound. Added after frames, it still goes first in the file
+   * from `finish()`, but live `onChunk` output does not get it.
    */
   addAudio(bytes: Uint8Array): void {
-    if (this.frames > 0 || this.inChunk > 0) throw new GlyphcastError('Audio must be added before the first frame');
-    for (let at = 0; at < bytes.length; at += 65536) this.emit(frameChunk({ start: 0, frames: 0, data: bytes.subarray(at, at + 65536) }));
+    const pieces: Uint8Array[] = [];
+    for (let at = 0; at < bytes.length; at += 65536) pieces.push(frameChunk({ start: 0, frames: 0, data: bytes.slice(at, at + 65536) }));
+    if (this.frames > 0 || this.inChunk > 0) this.lateAudio.push(...pieces);
+    else for (const piece of pieces) this.emit(piece);
   }
 
   /** Adds a frame of `cols × rows` pixels, 3 or 4 bytes per pixel. */
@@ -393,7 +419,19 @@ export class Encoder {
     this.flush();
     await this.queue;
     const header = writeHeader({ ...this.info, frameCount: this.frames });
-    const parts = [header, ...this.finished.slice(1)];
+    const body = [...this.lateAudio, ...this.finished.slice(1)];
+    const entries: IndexEntry[] = [];
+    let offset = HEADER_SIZE;
+    let start = 0;
+    for (const part of body) {
+      const frames = (part[4] ?? 0) | ((part[5] ?? 0) << 8);
+      if (frames > 0) {
+        entries.push({ offset, start, frames });
+        start += frames;
+      }
+      offset += part.length;
+    }
+    const parts = [header, ...body, writeIndex(entries)];
     const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
     let at = 0;
     for (const part of parts) {
@@ -403,6 +441,37 @@ export class Encoder {
     return out;
   }
 }
+
+const writeIndex = (entries: readonly IndexEntry[]): Uint8Array => {
+  const data = new Uint8Array(entries.length * 16 + INDEX_TRAILER);
+  const view = new DataView(data.buffer);
+  entries.forEach((entry, at) => {
+    view.setFloat64(at * 16, entry.offset, true);
+    view.setUint32(at * 16 + 8, entry.start, true);
+    view.setUint32(at * 16 + 12, entry.frames, true);
+  });
+  view.setUint32(data.length - 8, CHUNK_HEAD + data.length, true);
+  view.setUint32(data.length - 4, INDEX_MAGIC, true);
+  return frameChunk({ start: 0, frames: INDEX_FRAMES, data });
+};
+
+/** Length of the index chunk at the end of a file, read from its last 8 bytes, or null if the file has no index. */
+export const indexLength = (trailer: Uint8Array): number | null => {
+  if (trailer.length < INDEX_TRAILER) return null;
+  const view = new DataView(trailer.buffer, trailer.byteOffset + trailer.length - INDEX_TRAILER, INDEX_TRAILER);
+  return view.getUint32(4, true) === INDEX_MAGIC ? view.getUint32(0, true) : null;
+};
+
+/** Parses the index chunk from the end of a file: where every chunk of frames starts. */
+export const readIndex = (chunk: Uint8Array): IndexEntry[] => {
+  const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  const count = Math.floor((chunk.length - CHUNK_HEAD - INDEX_TRAILER) / 16);
+  return Array.from({ length: count }, (_, at) => ({
+    offset: view.getFloat64(CHUNK_HEAD + at * 16, true),
+    start: view.getUint32(CHUNK_HEAD + at * 16 + 8, true),
+    frames: view.getUint32(CHUNK_HEAD + at * 16 + 12, true),
+  }));
+};
 
 /** MIME type of embedded audio bytes, from their signature. */
 export const audioType = (bytes: Uint8Array): string => {

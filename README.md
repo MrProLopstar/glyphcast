@@ -28,6 +28,7 @@ No bundler? `import 'https://cdn.jsdelivr.net/npm/glyphcast@0/dist/element.js/+e
 | Attribute | |
 |---|---|
 | `src` | Video URL or `.gcast` file |
+| `poster` | Image shown until the first frame |
 | `audio` | Audio for a `.gcast` file |
 | `youtube`, `file`, `server` | Stream through `glyphcast serve` (see below) |
 | `subtitles` | WebVTT or SRT subtitles, drawn on the glyph grid |
@@ -43,14 +44,35 @@ No bundler? `import 'https://cdn.jsdelivr.net/npm/glyphcast@0/dist/element.js/+e
 
 Keys: Space or K play, ←/→ 5 s, J/L 10 s, ↑/↓ volume, M mute, F fullscreen, P picture-in-picture, 0–9 jump. Theme it with `--accent` and `--radius`; `element.load(fileOrStreamOrUrl)` and `element.player` give programmatic control.
 
+### React and Vue
+
+```tsx
+import { GlyphPlayer } from 'glyphcast/react';
+
+<GlyphPlayer src="/movie.gcast" poster="/movie.jpg" mode="braille" onReady={(player) => player.play()} />
+```
+
+```vue
+<script setup>
+import { GlyphPlayer } from 'glyphcast/vue';
+</script>
+
+<template>
+  <GlyphPlayer src="/movie.gcast" poster="/movie.jpg" mode="braille" @ended="next" />
+</template>
+```
+
+Props match the attributes (`autoPlay`, `autoLevels` in camelCase), plus `play`, `pause`, `ended`, `timeupdate`, `error` events and `ready` with the engine. The element loads after mounting, so the wrappers work with server rendering.
+
 Without UI, `GlyphPlayer` is the same engine with the media element API: `load`, `play`, `pause`, `seek`, `currentTime`, `duration`, `volume`, `muted`, `playbackRate`, `configure(look)`, `setCaptions(textOrUrl)` and the usual events.
 
 ## Glyphs instead of video
 
-At 160 columns a frame is about nine thousand colored cells, far less than a video frame. `.gcast` stores 6-bit brightness per cell and one color per 2×2 cells, like 4:2:0 video. The grid is cut into 8×4 blocks: a block either repeats the previous frame shifted by a motion vector or carries a residual against it, quantized to the threshold. One- or two-second chunks are deflated and start with an exact key frame. Sound can be embedded in the `.gcast` itself: it comes before the frames, and the player extracts it and keeps time by it. The playground has a converter that makes a `.gcast` from your video right in the browser and shows how much smaller it got. The format streams: chunks are length-prefixed, so a player starts with the first one, and a server can produce them live.
+At 160 columns a frame is about nine thousand colored cells, far less than a video frame. `.gcast` stores 6-bit brightness per cell and one color per 2×2 cells, like 4:2:0 video. The grid is cut into 8×4 blocks: a block either repeats the previous frame shifted by a motion vector or carries a residual against it, quantized to the threshold. One- or two-second chunks are deflated and start with an exact key frame. Sound can be embedded in the `.gcast` itself: it comes before the frames, and the player extracts it and keeps time by it. The playground has a converter that makes a `.gcast` from your video right in the browser (encoding runs in a Web Worker), shows how much smaller it got and the matching console command. Convert whole films in the console: a browser cannot hold their sound in memory. A chunk index sits at the end of the file: the player reads it with a range request and, when seeking, fetches the right place at once instead of waiting for the whole file. The format streams: chunks are length-prefixed, so a player starts with the first one, and a server can produce them live.
 
 ```sh
-npx glyphcast encode movie.mp4 --cols 180 --embed             # one file, Opus sound inside
+npx glyphcast encode movie.mp4 --cols 180 --embed --poster    # one file with Opus sound inside, plus movie.jpg
+npx glyphcast encode *.mp4 --embed                            # several videos in a row, with progress and time left
 npx glyphcast encode movie.mp4 --cols 180 --audio movie.m4a   # sound as a separate file
 npx glyphcast play movie.gcast                                  # in the terminal
 npx glyphcast serve --dir ./videos                              # live streams
