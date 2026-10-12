@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0
+
+- `glyphcast publish` uploads a `.gcast` with its poster to the gcast hub
+- The playground links to the hub and offers publishing after a conversion
+
 ## 0.5.8
 
 - Terminal player survives dropped connections: range requests retry three times, a chunk that still fails is fetched again when needed

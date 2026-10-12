@@ -18,6 +18,9 @@ const USAGE = `glyphcast: video as glyphs
       C colors, [ ] saturation, B background, Q quit; sound via ffplay
   glyphcast hub [search]
       lists open videos in the gcast hub; play them with glyphcast play hub:<name>
+  glyphcast publish <file.gcast> --title "Name" [--license CC-BY] [--image poster.jpg]
+      uploads to the gcast hub with the key from GLYPHCAST_HUB_KEY; licenses: CC0, CC-BY, CC-BY-SA,
+      CC-BY-NC, public-domain list the video, own keeps it reachable by link only
   glyphcast info <file.gcast>
   glyphcast serve [--port 8787] [--dir videos] [--no-youtube] [--yt-dlp path] [--ffmpeg path]
       live .gcast streams from YouTube links and videos in --dir, for <glyph-player>
@@ -37,6 +40,9 @@ const main = async (): Promise<void> => {
       threshold: { type: 'string' },
       embed: { type: 'boolean' },
       poster: { type: 'boolean' },
+      title: { type: 'string' },
+      license: { type: 'string' },
+      image: { type: 'string' },
       audio: { type: 'string' },
       port: { type: 'string' },
       dir: { type: 'string' },
@@ -52,6 +58,23 @@ const main = async (): Promise<void> => {
     const port = values.port ? Number(values.port) : 8787;
     await serve({ port, ...(values.dir ? { dir: values.dir } : {}), youtube: !values['no-youtube'], ...(values['yt-dlp'] ? { ytDlp: values['yt-dlp'] } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}), onRequest: (line) => console.log(line) });
     console.log(`glyphcast serve: http://127.0.0.1:${port}`);
+    return;
+  }
+  if (command === 'publish') {
+    const key = process.env['GLYPHCAST_HUB_KEY'];
+    if (!input || !values.title || !key) throw new Error('Usage: GLYPHCAST_HUB_KEY=<key> glyphcast publish <file.gcast> --title "Name" [--license CC-BY] [--image poster.jpg]');
+    const { files } = await hub();
+    const license = values.license ?? 'own';
+    const query = new URLSearchParams({ title: values.title, license, listed: license === 'own' ? '0' : '1' });
+    const send = async (url: string, path: string, type: string): Promise<Record<string, unknown>> => {
+      const response = await fetch(url, { method: 'POST', body: readFileSync(path), headers: { 'x-hub-key': key, 'content-type': type } });
+      const data = (await response.json()) as Record<string, unknown>;
+      if (!response.ok) throw new Error(`The hub refused ${basename(path)}: ${String(data['error'] ?? response.status)}`);
+      return data;
+    };
+    const entry = await send(`${files}/upload?${query}`, input, 'application/octet-stream');
+    if (values.image) await send(`${files}/poster/${String(entry['id'])}`, values.image, 'image/jpeg');
+    console.log(`${String(entry['title'])}: hub:${String(entry['listed'] ? entry['slug'] : entry['id'])}`);
     return;
   }
   if (command === 'hub') {
