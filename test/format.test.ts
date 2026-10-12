@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { audioType, decodeChunk, Encoder, GlyphcastError, INDEX_TRAILER, indexLength, readHeader, readIndex, StreamReader, type Chunk } from '../src/format.js';
 import { captionAt, parseCaptions } from '../src/captions.js';
+import { upscale2x } from '../src/upscale.js';
 import { autoLevels, glyphIndex, luma, NEUTRAL } from '../src/levels.js';
 
 const cols = 20;
@@ -189,5 +190,20 @@ describe('chunk index', () => {
     const [whole] = split(bytes).slice(1);
     expect(await decodeChunk(header, middle[0]?.data ?? new Uint8Array())).toEqual(await decodeChunk(header, whole?.data ?? new Uint8Array()));
     expect(indexLength(new Uint8Array(8))).toBeNull();
+  });
+});
+
+describe('upscale2x', () => {
+  it('doubles the frame and keeps diagonal edges sharp', () => {
+    const black = [0, 0, 0, 255];
+    const white = [255, 255, 255, 255];
+    const grid = [black, white, white, black, black, white, black, black, black].flat();
+    const out = upscale2x(new Uint8Array(grid), 3, 3);
+    expect(out.length).toBe(6 * 6 * 4);
+    const at = (x: number, y: number): number => out[(y * 6 + x) * 4] ?? -1;
+    expect(at(3, 2)).toBe(255);
+    expect(at(2, 2)).toBe(0);
+    expect(at(3, 3)).toBe(0);
+    expect(at(1, 1)).toBe(0);
   });
 });

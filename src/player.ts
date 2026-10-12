@@ -2,6 +2,7 @@ import { audioType, decodeChunk, GlyphcastError, indexLength, INDEX_TRAILER, rea
 import { autoLevels, ease, NEUTRAL, type Levels } from './levels.js';
 import { captionAt, parseCaptions, type Cue } from './captions.js';
 import { DEFAULT_GLYPHS, GlyphRenderer, type RenderMode } from './renderer.js';
+import { upscale2x } from './upscale.js';
 
 export interface LookOptions {
   /** Grid width in glyphs for video sources; `.gcast` streams carry their own grid. Default 160. */
@@ -24,6 +25,8 @@ export interface LookOptions {
   readonly crt?: boolean;
   /** Cell background tinted by its color, 0 for pure black. Default 0.25. */
   readonly fill?: number;
+  /** Edge-directed 2× upscaling before drawing: sharper contours from the same stream. Default true. */
+  readonly sharp?: boolean;
 }
 
 export interface PlayerOptions extends LookOptions {
@@ -119,6 +122,7 @@ export class GlyphPlayer extends EventTarget {
       edges: options.edges ?? false,
       crt: options.crt ?? false,
       fill: options.fill ?? 0.25,
+      sharp: options.sharp ?? true,
     };
     this.renderer = new GlyphRenderer(canvas, { glyphs: this.look.glyphs, background: this.look.background, ...(options.glyphSize ? { glyphSize: options.glyphSize } : {}), ...(options.font ? { font: options.font } : {}) });
     const context = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
@@ -563,7 +567,8 @@ export class GlyphPlayer extends EventTarget {
       this.caption = caption;
       this.renderer.setCaption(caption);
     }
-    this.renderer.draw(pixels, cols, rows, { levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt, fill: this.look.fill });
+    const sharp = this.look.sharp;
+    this.renderer.draw(sharp ? upscale2x(pixels, cols, rows) : pixels, cols, rows, { detail: sharp ? 2 : 1, levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt, fill: this.look.fill });
   }
 
   private steady(pixels: Uint8ClampedArray): Uint8ClampedArray {

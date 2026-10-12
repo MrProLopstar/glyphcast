@@ -43,6 +43,7 @@ npm install glyphcast
 | `autolevels` | `false` выключает подстройку яркости и контраста |
 | `mode` | `glyphs`, `braille` или `halftone` |
 | `edges`, `crt` | Контуры и вид кинескопа |
+| `sharp` | `false` выключает чёткость ×2 (апскейл по границам) |
 | `fill` | Подсветка фона клетки её цветом, от 0 до 1, по умолчанию `0.25` |
 | `autoplay`, `muted`, `loop` | Как у `<video>` |
 

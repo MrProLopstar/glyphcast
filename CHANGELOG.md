@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+
+- Sharp ×2: frames are upscaled with edge-directed scaling before drawing, so contours and diagonals are crisp from the same stream. On by default, `sharp="false"` or the menu turns it off; `X` toggles it in the terminal
+- `upscale2x()` is exported
+
 ## 0.7.0
 
 - Shadows keep detail: a tone curve lifts dark areas when choosing glyphs and their brightness, in the browser and the terminal

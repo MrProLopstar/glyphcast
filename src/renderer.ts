@@ -32,6 +32,8 @@ export interface FrameStyle {
   readonly crt?: boolean;
   /** How much each cell's background takes its color, 0 for pure black. Softens contrast on large screens. Default 0.25. */
   readonly fill?: number;
+  /** The pixels are this many times larger than the grid on each side, for example 2 after `upscale2x`. Default 1. */
+  readonly detail?: number;
 }
 
 const VERTEX = `#version 300 es
@@ -68,7 +70,7 @@ float leveled(float luma) {
   return pow(clamp((luma - 0.5) * contrast + 0.5 + brightness, 0.0, 1.0), SHADOWS);
 }
 float lumaAt(vec2 cell) {
-  return dot(texelFetch(cells, ivec2(clamp(cell, vec2(0.0), grid - 1.0)), 0).rgb, WEIGHTS);
+  return dot(texture(cells, (clamp(cell, vec2(0.0), grid - 1.0) + 0.5) / grid).rgb, WEIGHTS);
 }
 vec3 paint(vec3 source, float level) {
   float luma = dot(source, WEIGHTS);
@@ -94,7 +96,7 @@ void main() {
   vec2 position = at * grid;
   vec2 cell = floor(position);
   vec2 local = fract(position);
-  vec3 source = texelFetch(cells, ivec2(cell), 0).rgb;
+  vec3 source = texture(cells, (cell + 0.5) / grid).rgb;
   float level = leveled(dot(source, WEIGHTS));
   vec3 glyph = paint(source, level);
   float ink;
@@ -299,7 +301,8 @@ export class GlyphRenderer {
   /** Draws one frame: `cols × rows` RGBA pixels, one per cell. */
   draw(pixels: Uint8Array | Uint8ClampedArray, cols: number, rows: number, style: FrameStyle = {}): void {
     const { gl, canvas } = this;
-    if (pixels.length !== cols * rows * 4) throw new Error(`Expected ${cols * rows * 4} bytes for a ${cols}×${rows} frame, got ${pixels.length}`);
+    const detail = style.detail ?? 1;
+    if (pixels.length !== cols * rows * 4 * detail * detail) throw new Error(`Expected ${cols * rows * 4 * detail * detail} bytes for a ${cols}×${rows} frame at detail ${detail}, got ${pixels.length}`);
     if (cols !== this.cols || rows !== this.rows) {
       const { width, height } = this.size(cols, rows);
       canvas.width = width;
@@ -312,7 +315,10 @@ export class GlyphRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.cellsTexture);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cols, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength));
+    const filter = detail > 1 ? gl.NEAREST : gl.LINEAR;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cols * detail, rows * detail, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength));
     const levels = style.levels ?? NEUTRAL;
     gl.uniform2f(this.uniforms['grid'] ?? null, cols, rows);
     gl.uniform1f(this.uniforms['brightness'] ?? null, levels.brightness);

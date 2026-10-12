@@ -22,5 +22,6 @@
 export { audioType, decodeChunk, Encoder, indexLength, INDEX_TRAILER, readIndex, type IndexEntry, frameChunk, GlyphcastError, readHeader, StreamReader, writeHeader, type Chunk, type EncodeOptions, type StreamInfo } from './format.js';
 export { autoLevels, glyphIndex, luma, type Levels } from './levels.js';
 export { captionAt, parseCaptions, type Cue } from './captions.js';
+export { upscale2x } from './upscale.js';
 export { DEFAULT_GLYPHS, GlyphRenderer, type FrameStyle, type RenderMode, type RendererOptions } from './renderer.js';
 export { GlyphPlayer, sourceFor, type LookOptions, type PlayerOptions, type Source } from './player.js';

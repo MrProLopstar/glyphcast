@@ -5,6 +5,7 @@ import { autoLevels, ease, luma, NEUTRAL, SHADOWS, type Levels } from './levels.
 import { probe } from './node.js';
 import { GLYPH_SETS, TINTS } from './looks.js';
 import { DEFAULT_GLYPHS } from './renderer.js';
+import { upscale2x } from './upscale.js';
 
 export interface TerminalOptions {
   /** Glyphs from dark to bright. Default `' .:-=+*#%@'`. */
@@ -193,7 +194,7 @@ const steady = (previous: Uint8ClampedArray | null, pixels: Uint8ClampedArray): 
 
 const MODES: readonly [string, TerminalMode][] = [['Брайль', 'braille'], ['символы', 'glyphs'], ['полублоки', 'blocks']];
 const FILLS = [0.25, 0.5, 0];
-const RUSSIAN: Readonly<Record<string, string>> = { й: 'q', л: 'k', о: 'j', д: 'l', ь: 'm', п: 'g', с: 'c', х: '[', ъ: ']', и: 'b' };
+const RUSSIAN: Readonly<Record<string, string>> = { ч: 'x', й: 'q', л: 'k', о: 'j', д: 'l', ь: 'm', п: 'g', с: 'c', х: '[', ъ: ']', и: 'b' };
 
 interface Piece {
   readonly start: number;
@@ -439,6 +440,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     tint: Math.max(0, TINTS.findIndex(([, tint]) => tint === (options.tint ?? null))),
     boost: options.boost ?? 1.3,
     fill: Math.max(0, FILLS.indexOf(options.fill ?? 0.25)),
+    sharp: true,
   };
   let previous: Uint8ClampedArray | null = null;
   let redraw = true;
@@ -523,6 +525,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     else if (key === '[') look.boost = Math.max(0, Math.round((look.boost - 0.1) * 10) / 10);
     else if (key === ']') look.boost = Math.min(2.5, Math.round((look.boost + 0.1) * 10) / 10);
     else if (key === 'b') look.fill = (look.fill + 1) % FILLS.length;
+    else if (key === 'x') look.sharp = !look.sharp;
     redraw = true;
   };
   const interactive = Boolean(input$.isTTY);
@@ -563,7 +566,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
           }
           pictureLeft = left;
           pictureWidth = fitted.width;
-          const text = ansiFrame(previous ?? frame, info.cols, info.rows, 4, levels, {
+          const shown$ = previous ?? frame;
+          const text = ansiFrame(look.sharp ? upscale2x(shown$, info.cols, info.rows) : shown$, info.cols * (look.sharp ? 2 : 1), info.rows * (look.sharp ? 2 : 1), 4, levels, {
             width: view.width,
             height: view.height,
             mode: MODES[look.mode]?.[1] ?? 'braille',
@@ -584,8 +588,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         drawnHeight = view.height;
         redraw = true;
       }
-      const settings = `${MODES[look.mode]?.[0]}, ${(GLYPH_SETS[look.glyphs]?.[0] ?? '').toLowerCase()}, ${(TINTS[look.tint]?.[0] ?? '').toLowerCase()}, нас. ${look.boost.toFixed(1)}, фон ${FILLS[look.fill]}`;
-      const hints = interactive ? '  пробел ←→ m g c [ ] b q' : '';
+      const settings = `${MODES[look.mode]?.[0]}, ${(GLYPH_SETS[look.glyphs]?.[0] ?? '').toLowerCase()}, ${(TINTS[look.tint]?.[0] ?? '').toLowerCase()}, нас. ${look.boost.toFixed(1)}, фон ${FILLS[look.fill]}${look.sharp ? ', ×2' : ''}`;
+      const hints = interactive ? '  пробел ←→ m g c [ ] b x q' : '';
       const span = pictureWidth >= 72 ? pictureWidth : view.width;
       const offset = pictureWidth >= 72 ? pictureLeft : 0;
       const bar = Math.max(8, span - 24 - settings.length - hints.length);
