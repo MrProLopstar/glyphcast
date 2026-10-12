@@ -3,7 +3,11 @@
 [![npm](https://img.shields.io/npm/v/glyphcast?color=f0a04b)](https://www.npmjs.com/package/glyphcast)
 [![JSR](https://jsr.io/badges/@mrprolopstar/glyphcast)](https://jsr.io/@mrprolopstar/glyphcast)
 
-[Русская версия](README.ru.md) · [Playground](https://mrprolopstar.github.io/glyphcast/)
+[Русская версия](README.ru.md) · [Playground](https://mrprolopstar.github.io/glyphcast/) · [Hub](https://mrprolopstar.github.io/gcast-hub/)
+
+![Big Buck Bunny in braille mode](https://mrprolopstar.github.io/glyphcast/preview.jpg)
+
+<sub>Big Buck Bunny © Blender Foundation, CC BY 3.0, in braille mode, 180 columns.</sub>
 
 Video as colored glyphs. A complete player for the browser: controls, settings, subtitles, keyboard shortcuts, picture-in-picture and fullscreen, with every frame redrawn as characters by a WebGL2 shader. A server can also send glyph frames instead of video, so the browser receives a compact `.gcast` stream rather than the footage itself. The same stream plays in a terminal too.
 
@@ -94,6 +98,15 @@ One minute of a film, picture only:
 | Micro video, 180 columns H.264 | 0.35 MB | 47 kbit/s |
 
 Stream size depends on the grid and motion, not on the source resolution, so heavier sources save more. A micro video is smaller still, because video codecs have transforms and entropy coding that `.gcast` lacks; `.gcast` needs no video decoder, gives identical frames everywhere and can be generated or edited frame by frame. From Node, `glyphcast/node` exports `encodeVideo`, `encodeMicroVideo`, `extractAudio` and `serve`, and `Encoder` builds streams from raw frames of any source.
+
+## Hub
+
+[gcast hub](https://mrprolopstar.github.io/gcast-hub/) stores videos as `.gcast` and plays them in the browser. The same videos play in a terminal:
+
+```sh
+npx glyphcast hub                  # list and search
+npx glyphcast play hub:<name>      # watch with sound, pause and seeking
+```
 
 ## License
 

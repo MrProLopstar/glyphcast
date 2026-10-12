@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>glyphcast playground</title>
 <meta name="description" content="Video as colored glyphs in the browser: a WebGL2 player with controls, PiP and glyph streaming.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="glyphcast: видео цветными символами">
+<meta property="og:description" content="Плеер на WebGL2 в браузере и в консоли, конвертер видео в компактный поток символов .gcast.">
+<meta property="og:url" content="https://mrprolopstar.github.io/glyphcast/">
+<meta property="og:image" content="https://mrprolopstar.github.io/glyphcast/preview.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="661">
+<meta name="twitter:card" content="summary_large_image">
 <style>
 :root {
   --bg: #07090c;
@@ -85,7 +93,7 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
   </header>
 
 
-  <glyph-player id="player" src="./onepiece.gcast" poster="./onepiece.jpg" mode="braille" cols="160"></glyph-player>
+  <glyph-player id="player" src="https://gcast-hub.aniclap.workers.dev/v/5RGtxDp3TFw.gcast" poster="./onepiece.jpg" mode="braille" cols="160"></glyph-player>
 
   <section class="sources">
     <div class="row">
@@ -168,7 +176,7 @@ $('file').addEventListener('change', async (event) => {
 
 $('sample').addEventListener('click', () => {
   clearSource();
-  player.setAttribute('src', './onepiece.gcast');
+  player.setAttribute('src', 'https://gcast-hub.aniclap.workers.dev/v/5RGtxDp3TFw.gcast');
 });
 
 $('camera').addEventListener('click', async () => {

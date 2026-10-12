@@ -3,7 +3,11 @@
 [![npm](https://img.shields.io/npm/v/glyphcast?color=f0a04b)](https://www.npmjs.com/package/glyphcast)
 [![JSR](https://jsr.io/badges/@mrprolopstar/glyphcast)](https://jsr.io/@mrprolopstar/glyphcast)
 
-[English version](README.md) · [Песочница](https://mrprolopstar.github.io/glyphcast/)
+[English version](README.md) · [Песочница](https://mrprolopstar.github.io/glyphcast/) · [Хаб](https://mrprolopstar.github.io/gcast-hub/)
+
+![Big Buck Bunny в режиме Брайля](https://mrprolopstar.github.io/glyphcast/preview.jpg)
+
+<sub>Big Buck Bunny © Blender Foundation, CC BY 3.0, в режиме Брайля, 180 колонок.</sub>
 
 Видео цветными символами. Полноценный плеер для браузера: управление, настройки, субтитры, горячие клавиши, картинка в картинке и полный экран, а каждый кадр перерисовывается символами шейдером WebGL2. Сервер может присылать вместо видео сами символьные кадры, и браузер получает компактный поток `.gcast`, а не исходное видео. Тот же поток играет и в терминале.
 
@@ -94,6 +98,15 @@ npx glyphcast micro movie.mp4 --cols 180                        # крошечн
 | Микровидео, 180 колонок H.264 | 0,35 МБ | 47 кбит/с |
 
 Размер потока зависит от сетки и движения в кадре, а не от разрешения исходника, поэтому чем тяжелее исходник, тем больше выигрыш. Микровидео всё равно меньше: у видеокодеков есть DCT и энтропийное кодирование, которых у `.gcast` нет. Зато `.gcast` не нужен видеодекодер, он даёт одинаковые кадры везде, и его можно генерировать или править покадрово. В Node модуль `glyphcast/node` даёт `encodeVideo`, `encodeMicroVideo`, `extractAudio` и `serve`, а `Encoder` собирает поток из сырых кадров любого источника.
+
+## Хаб
+
+[gcast hub](https://mrprolopstar.github.io/gcast-hub/) хранит видео в `.gcast` и показывает их в браузере. Те же видео играют в консоли:
+
+```sh
+npx glyphcast hub                  # список и поиск
+npx glyphcast play hub:<имя>       # смотреть со звуком, паузой и перемоткой
+```
 
 ## Лицензия
 
