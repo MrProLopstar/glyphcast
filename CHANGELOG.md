@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6
+
+- Terminal player: arrow keys seek again
+
 ## 0.5.5
 
 - Terminal player starts at once: embedded sound streams into ffplay instead of downloading first, seeking reads only the needed part

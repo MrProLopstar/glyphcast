@@ -499,7 +499,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       return;
     }
     if (text.startsWith('\x1b[<')) return;
-    const key = RUSSIAN[text.toLowerCase()] ?? text.toLowerCase();
+    const arrow = /^\x1b[[O]([CD])$/.exec(text)?.[1];
+    const key = arrow ? `\u001b[${arrow}` : (RUSSIAN[text.toLowerCase()] ?? text.toLowerCase());
     if (key === 'q' || key === '\u0003' || key === '\u001b') quit = true;
     else if (key === ' ' || key === 'k') toggle();
     else if (key === '\u001b[D') jump(now() - 5);
