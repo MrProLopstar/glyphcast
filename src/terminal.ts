@@ -51,6 +51,8 @@ export interface AnsiOptions {
   readonly tint?: string | null;
   /** How much each cell's background takes its color, 0 for none. Default 0. */
   readonly fill?: number;
+  /** Height of a terminal cell divided by its width. Default 2.25. */
+  readonly cellRatio?: number;
 }
 
 const BAYER = [0.0625, 0.5625, 0.8125, 0.3125, 0.9375, 0.4375, 0.1875, 0.6875];
@@ -62,8 +64,8 @@ const rgb = (hex: string): [number, number, number] => {
 };
 
 /** Size of the picture in terminal cells for a grid fitted into `width × height`. Terminal cells are about twice as tall as wide. */
-export const fitTerminal = (cols: number, rows: number, width: number, height: number): { readonly width: number; readonly height: number } => {
-  const ratio = (cols * 1.2) / rows;
+export const fitTerminal = (cols: number, rows: number, width: number, height: number, cellRatio = 2.25): { readonly width: number; readonly height: number } => {
+  const ratio = (cols * 0.6 * cellRatio) / rows;
   const fitted = Math.max(1, Math.min(width, Math.floor(height * ratio)));
   return { width: fitted, height: Math.max(1, Math.min(height, Math.round(fitted / ratio))) };
 };
@@ -75,7 +77,7 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
   const tint = options.tint ? rgb(options.tint) : null;
   const fill = options.fill ?? 0;
   const mode = options.mode ?? 'glyphs';
-  const { width, height } = fitTerminal(cols, rows, options.width ?? cols, options.height ?? Math.round(rows / 1.2));
+  const { width, height } = fitTerminal(cols, rows, options.width ?? cols, options.height ?? Math.round(rows / 1.2), options.cellRatio);
   const sample = (x: number, y: number): [number, number, number] => {
     const gx = Math.min(cols - 1, Math.max(0, x * cols - 0.5));
     const gy = Math.min(rows - 1, Math.max(0, y * rows - 0.5));
@@ -118,22 +120,33 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
         const center = sample((x + 0.5) / width, (y + 0.5) / height);
         const lit = level(center);
         let color = paint(center, lit);
+        let back = color.map((value) => value * fill * 0.5);
         if (mode === 'braille') {
           let bits = 0;
-          let brightest = lit;
+          const on = [0, 0, 0, 0];
+          const off = [0, 0, 0, 0];
           for (let dot = 0; dot < 8; dot += 1) {
             const dx = dot % 2;
             const dy = Math.floor(dot / 2);
-            const near = level(sample((x + (dx + 0.5) / 2) / width, (y + (dy + 0.5) / 4) / height));
-            if (near > Math.max(0.18, (BAYER[dot] ?? 0.5) * 0.75)) bits |= 1 << (BRAILLE[dx * 4 + dy] ?? 0);
-            brightest = Math.max(brightest, near);
+            const spot = sample((x + (dx + 0.5) / 2) / width, (y + (dy + 0.5) / 4) / height);
+            const near = level(spot);
+            const target = near > Math.max(0.18, (BAYER[dot] ?? 0.5) * 0.75) ? on : off;
+            if (target === on) bits |= 1 << (BRAILLE[dx * 4 + dy] ?? 0);
+            target[0] = (target[0] ?? 0) + spot[0];
+            target[1] = (target[1] ?? 0) + spot[1];
+            target[2] = (target[2] ?? 0) + spot[2];
+            target[3] = (target[3] ?? 0) + 1;
           }
-          color = paint(center, brightest).map((value) => value * 1.2) as [number, number, number];
+          const mean = (sum: number[]): [number, number, number] => [(sum[0] ?? 0) / (sum[3] || 1), (sum[1] ?? 0) / (sum[3] || 1), (sum[2] ?? 0) / (sum[3] || 1)];
+          const lights = on[3] ? mean(on) : center;
+          color = paint(lights, Math.min(1, level(lights) + 0.15)).map((value) => value * 1.15) as [number, number, number];
+          const shade = off[3] ? mean(off) : center;
+          back = paint(shade, level(shade)).map((value) => value * fill);
           char = String.fromCharCode(0x2800 + bits);
         } else {
           char = glyphs[Math.min(glyphs.length - 1, Math.floor(lit * glyphs.length))] ?? ' ';
         }
-        style = code(38, color) + (fill > 0 ? code(48, color.map((value) => value * fill * 0.5)) : '');
+        style = code(38, color) + (fill > 0 ? code(48, back) : '');
       }
       if (style !== last) out += style;
       last = style;
@@ -181,6 +194,7 @@ const steady = (previous: Uint8ClampedArray | null, pixels: Uint8ClampedArray): 
 
 const MODES: readonly [string, TerminalMode][] = [['Брайль', 'braille'], ['символы', 'glyphs'], ['полублоки', 'blocks']];
 const FILLS = [0.25, 0.5, 0];
+const RUSSIAN: Readonly<Record<string, string>> = { й: 'q', л: 'k', о: 'j', д: 'l', ь: 'm', п: 'g', с: 'c', х: '[', ъ: ']', и: 'b' };
 
 interface Piece {
   readonly start: number;
@@ -352,8 +366,30 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     }
     return pending;
   };
+  let cellRatio = 2.25;
+  let barStart = 0;
+  let barWidth = 0;
   const keys = (data: Buffer): void => {
-    const key = data.toString();
+    const text = data.toString();
+    const size = /\x1b\[6;(\d+);(\d+)t/.exec(text);
+    if (size) {
+      const ratio = Number(size[1]) / Number(size[2]);
+      if (ratio > 1 && ratio < 4) cellRatio = ratio;
+      output.write('\x1b[2J');
+      redraw = true;
+      return;
+    }
+    const click = /\x1b\[<(\d+);(\d+);(\d+)M/.exec(text);
+    if (click) {
+      const [, button, column, row] = click.map(Number);
+      if (button !== 0) return;
+      if (row === view.height + 1 && column !== undefined && column >= barStart && column < barStart + barWidth) jump(((column - barStart + 0.5) / barWidth) * total());
+      else if (row !== undefined && row <= view.height) toggle();
+      redraw = true;
+      return;
+    }
+    if (text.startsWith('\x1b[<')) return;
+    const key = RUSSIAN[text.toLowerCase()] ?? text.toLowerCase();
     if (key === 'q' || key === '\u0003' || key === '\u001b') quit = true;
     else if (key === ' ' || key === 'k') toggle();
     else if (key === '\u001b[D') jump(now() - 5);
@@ -374,6 +410,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     input$.setRawMode(true);
     input$.resume();
     input$.on('data', keys);
+    output.write('\x1b[?1000h\x1b[?1006h\x1b[16t');
   }
   audio.start(0);
   try {
@@ -391,8 +428,9 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         if (frame) {
           if (index !== shown) previous = steady(previous, frame);
           levels = ease(levels, autoLevels(previous ?? frame));
-          const fitted = fitTerminal(info.cols, info.rows, view.width, view.height);
+          const fitted = fitTerminal(info.cols, info.rows, view.width, view.height, cellRatio);
           const left = Math.floor((view.width - fitted.width) / 2);
+          const top = Math.floor((view.height - fitted.height) / 2);
           const text = ansiFrame(previous ?? frame, info.cols, info.rows, 4, levels, {
             width: view.width,
             height: view.height,
@@ -401,8 +439,9 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
             tint: TINTS[look.tint]?.[1] ?? null,
             boost: look.boost,
             fill: FILLS[look.fill] ?? 0,
+            cellRatio,
           });
-          output.write(`\x1b[H${text.split('\n').map((line) => (left > 0 ? `\x1b[${left}C` : '') + line).join('\n')}`);
+          output.write(text.split('\n').map((line, row) => `\x1b[${top + row + 1};${left + 1}H${line}`).join(''));
           shown = index;
           redraw = false;
         }
@@ -417,7 +456,10 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       const hints = interactive ? '  пробел ←→ m g c [ ] b q' : '';
       const bar = Math.max(8, view.width - 24 - settings.length - hints.length);
       const filled = Math.round(share * bar);
-      const status = `${playing ? '▶' : '❚❚'} ${clock(time)} / ${clock(total())} ${'█'.repeat(filled)}${'░'.repeat(bar - filled)}  ${settings}${hints}`;
+      const head = `${playing ? '▶' : '❚❚'} ${clock(time)} / ${clock(total())} `;
+      barStart = head.length + 1;
+      barWidth = bar;
+      const status = `${head}${'█'.repeat(filled)}${'░'.repeat(bar - filled)}  ${settings}${hints}`;
       output.write(`\x1b[${view.height + 1};1H\x1b[0m\x1b[2K${status.slice(0, view.width - 1)}`);
       if (playing && time >= total() && library.complete()) break;
       await new Promise((resolve) => setTimeout(resolve, Math.max(5, 1000 / info.fps / 2)));
@@ -425,6 +467,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   } finally {
     if (interactive) {
       input$.off('data', keys);
+      output.write('\x1b[?1006l\x1b[?1000l');
       input$.setRawMode(false);
       input$.pause();
     }

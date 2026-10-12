@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3
+
+- Terminal player: click the progress bar to seek, click the picture to pause; keys work in the Russian layout too
+- Richer braille colors: dots take the color of what they cover, the cell background the color of the rest
+- The picture keeps true proportions using the terminal cell size and is centered
+
 ## 0.5.2
 
 - Terminal player has the browser defaults (braille, saturation 1.3, background fill 0.25, frame smoothing) and keys to change them: M render mode (braille, glyphs, half blocks), G glyph set, C colors, [ ] saturation, B background
