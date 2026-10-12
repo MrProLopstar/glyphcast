@@ -36,6 +36,9 @@ const run = (command: string, args: readonly string[], onData?: (chunk: Buffer) 
     child.on('close', (code) => (code === 0 ? resolve(text) : reject(new GlyphcastError(`${command} exited with ${String(code)}: ${errors.trim().split('\n').slice(-3).join(' ')}`))));
   });
 
+const hasAudio = async (input: string, ffprobe = 'ffprobe'): Promise<boolean> =>
+  (await run(ffprobe, ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', input])).trim().length > 0;
+
 /** Width and height of the first video stream. */
 export const probe = async (input: string, ffprobe = 'ffprobe'): Promise<{ readonly width: number; readonly height: number; readonly duration: number }> => {
   const output = await run(ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height:format=duration', '-of', 'json', input]);
@@ -56,7 +59,7 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
   let frames = 0;
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
-  if (options.embedAudio) {
+  if (options.embedAudio && (await hasAudio(input, options.ffprobe))) {
     const temp = mkdtempSync(join(tmpdir(), 'glyphcast-'));
     try {
       await extractAudio(input, join(temp, 'audio.opus'), options.ffmpeg ? { ffmpeg: options.ffmpeg } : {});

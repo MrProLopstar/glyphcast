@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- `--embed` skips videos without a sound track instead of failing
+
 ## 0.6.1
 
 - Embedded and extracted sound is mixed down to stereo, so 5.1 sources no longer fail with Opus
