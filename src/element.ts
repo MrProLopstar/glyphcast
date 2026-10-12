@@ -124,7 +124,7 @@ type DocumentPip = { requestWindow: (options: { width: number; height: number })
  * `muted`, `loop`. The `player` property gives the underlying `GlyphPlayer`.
  */
 export class GlyphPlayerElement extends HTMLElement {
-  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'poster', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt', 'sharp'];
+  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'poster', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt', 'sharp', 'smooth'];
 
   readonly player: GlyphPlayer;
   private readonly root: ShadowRoot;
@@ -189,6 +189,7 @@ export class GlyphPlayerElement extends HTMLElement {
       ...(this.hasAttribute('mode') ? { mode: this.getAttribute('mode') as RenderMode } : {}),
       edges: this.flag('edges'),
       ...(this.hasAttribute('sharp') ? { sharp: this.getAttribute('sharp') !== 'false' } : {}),
+      ...(this.hasAttribute('smooth') ? { smooth: this.getAttribute('smooth') !== 'false' } : {}),
       crt: this.flag('crt'),
     } as LookOptions;
   }
@@ -495,6 +496,7 @@ export class GlyphPlayerElement extends HTMLElement {
       fill,
       toggle('Автояркость и контраст', look.autoLevels !== false, (next) => player.configure({ autoLevels: next })),
       toggle('Чёткость ×2', look.sharp !== false, (next) => player.configure({ sharp: next })),
+      toggle('Плавность', look.smooth !== false, (next) => player.configure({ smooth: next })),
       toggle('Контуры', look.edges === true, (next) => player.configure({ edges: next })),
       toggle('Кинескоп', look.crt === true, (next) => player.configure({ crt: next })),
     );

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+- Smooth playback: frames in between are drawn along the block motion already stored in `.gcast`, so a 24 fps stream plays at the display rate. On by default, `smooth="false"` or the menu turns it off; `V` toggles it in the terminal
+- `decodeChunkMotion()` and `interpolate()` are exported
+
 ## 0.8.0
 
 - Sharp ×2: frames are upscaled with edge-directed scaling before drawing, so contours and diagonals are crisp from the same stream. On by default, `sharp="false"` or the menu turns it off; `X` toggles it in the terminal

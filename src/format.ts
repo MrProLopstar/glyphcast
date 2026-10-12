@@ -509,11 +509,21 @@ export const audioType = (bytes: Uint8Array): string => {
 };
 
 /** Decodes one chunk payload into RGBA frames (`cols × rows × 4` bytes each), ready to upload as a texture. */
-export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold'>, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => {
+export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold'>, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => (await decodeChunkMotion(info, compressed)).frames;
+
+/** Decoded frames with the motion of every 8×4 block (dx, dy in cells per block), for interpolating between frames. */
+export interface DecodedChunk {
+  readonly frames: Uint8ClampedArray[];
+  readonly motion: Int8Array[];
+}
+
+/** Like `decodeChunk`, and also returns where each block of each frame came from in the previous one. */
+export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold'>, compressed: Uint8Array): Promise<DecodedChunk> => {
   const raw = await inflate(compressed);
   const shape = layout(info.cols, info.rows);
   const { size } = steps(info.threshold);
   const frames: Uint8ClampedArray[] = [];
+  const motion: Int8Array[] = [];
   let state = planes(shape);
   let at = 0;
   while (at < raw.length) {
@@ -534,7 +544,13 @@ export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'thre
     at += counts.y + counts.u + counts.v;
     if (modes.length < shape.blocks || at > raw.length) throw new GlyphcastError('Truncated frame');
     const next = planes(shape);
+    const vectors = new Int8Array(shape.blocks * 2);
     modes.forEach((mode, block) => {
+      if (mode !== UNIFORM && type === 1) {
+        const [mx, my] = VECTORS[mode & ~RESIDUAL] ?? [0, 0];
+        vectors[block * 2] = mx;
+        vectors[block * 2 + 1] = my;
+      }
       if (mode === UNIFORM) {
         const fill = { y: raw[offsets.y] ?? 0, u: raw[offsets.u] ?? 0, v: raw[offsets.v] ?? 0 };
         offsets.y += 1;
@@ -560,6 +576,40 @@ export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'thre
     });
     state = next;
     frames.push(toPixels(state, shape));
+    motion.push(vectors);
   }
-  return frames;
+  return { frames, motion };
+};
+
+/**
+ * A frame between two decoded frames at `t` from 0 to 1: colors are blended, and blocks that moved are drawn
+ * part of the way along their motion vector, so playback looks smoother than the stream's frame rate.
+ */
+export const interpolate = (from: Uint8ClampedArray, to: Uint8ClampedArray, motion: Int8Array, cols: number, rows: number, t: number): Uint8ClampedArray => {
+  const out = new Uint8ClampedArray(to.length);
+  for (let index = 0; index < out.length; index += 1) out[index] = (from[index] ?? 0) + ((to[index] ?? 0) - (from[index] ?? 0)) * t;
+  const blocksX = Math.ceil(cols / BLOCK_W);
+  for (let block = 0; block < motion.length / 2; block += 1) {
+    const dx = motion[block * 2] ?? 0;
+    const dy = motion[block * 2 + 1] ?? 0;
+    if (dx === 0 && dy === 0) continue;
+    const ox = Math.round(dx * (1 - t));
+    const oy = Math.round(dy * (1 - t));
+    const bx = (block % blocksX) * BLOCK_W;
+    const by = Math.floor(block / blocksX) * BLOCK_H;
+    for (let y = by; y < Math.min(by + BLOCK_H, rows); y += 1) {
+      const ty = y + oy;
+      if (ty < 0 || ty >= rows) continue;
+      for (let x = bx; x < Math.min(bx + BLOCK_W, cols); x += 1) {
+        const tx = x + ox;
+        if (tx < 0 || tx >= cols) continue;
+        const source = (y * cols + x) * 4;
+        const target = (ty * cols + tx) * 4;
+        out[target] = to[source] ?? 0;
+        out[target + 1] = to[source + 1] ?? 0;
+        out[target + 2] = to[source + 2] ?? 0;
+      }
+    }
+  }
+  return out;
 };

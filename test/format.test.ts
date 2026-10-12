@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { audioType, decodeChunk, Encoder, GlyphcastError, INDEX_TRAILER, indexLength, readHeader, readIndex, StreamReader, type Chunk } from '../src/format.js';
+import { audioType, decodeChunk, decodeChunkMotion, Encoder, GlyphcastError, INDEX_TRAILER, indexLength, interpolate, readHeader, readIndex, StreamReader, type Chunk } from '../src/format.js';
 import { captionAt, parseCaptions } from '../src/captions.js';
 import { upscale2x } from '../src/upscale.js';
 import { autoLevels, glyphIndex, luma, NEUTRAL } from '../src/levels.js';
@@ -205,5 +205,21 @@ describe('upscale2x', () => {
     expect(at(2, 2)).toBe(0);
     expect(at(3, 3)).toBe(0);
     expect(at(1, 1)).toBe(0);
+  });
+});
+
+describe('interpolation', () => {
+  it('reports block motion and draws moved blocks part of the way', async () => {
+    const encoder = new Encoder({ cols, rows, fps: 30, chunkFrames: 30, threshold: 0 });
+    encoder.add(frame(0, 0));
+    encoder.add(frame(0, 2));
+    const bytes = await encoder.finish();
+    const [chunk] = split(bytes);
+    const { frames, motion } = await decodeChunkMotion(readHeader(bytes), chunk?.data ?? new Uint8Array());
+    expect(motion[0]?.every((value) => value === 0)).toBe(true);
+    expect(motion[1]?.some((value) => value !== 0)).toBe(true);
+    const middle = interpolate(frames[0] ?? new Uint8ClampedArray(), frames[1] ?? new Uint8ClampedArray(), motion[1] ?? new Int8Array(), cols, rows, 0.5);
+    expect(middle.length).toBe(frames[0]?.length);
+    expect(interpolate(frames[0] ?? new Uint8ClampedArray(), frames[1] ?? new Uint8ClampedArray(), motion[1] ?? new Int8Array(), cols, rows, 1)).toEqual(frames[1]);
   });
 });

@@ -1,4 +1,4 @@
-import { audioType, decodeChunk, GlyphcastError, indexLength, INDEX_TRAILER, readIndex, type IndexEntry, StreamReader, type Chunk, type StreamInfo } from './format.js';
+import { audioType, decodeChunkMotion, GlyphcastError, interpolate, type DecodedChunk, indexLength, INDEX_TRAILER, readIndex, type IndexEntry, StreamReader, type Chunk, type StreamInfo } from './format.js';
 import { autoLevels, ease, NEUTRAL, type Levels } from './levels.js';
 import { captionAt, parseCaptions, type Cue } from './captions.js';
 import { DEFAULT_GLYPHS, GlyphRenderer, type RenderMode } from './renderer.js';
@@ -27,6 +27,8 @@ export interface LookOptions {
   readonly fill?: number;
   /** Edge-directed 2× upscaling before drawing: sharper contours from the same stream. Default true. */
   readonly sharp?: boolean;
+  /** Frames between the stream's frames along block motion, for `.gcast` sources. Default true. */
+  readonly smooth?: boolean;
 }
 
 export interface PlayerOptions extends LookOptions {
@@ -69,7 +71,7 @@ interface StreamState {
   readonly source: Extract<Source, { type: 'gcast' }>;
   readonly reader: StreamReader;
   readonly chunks: Chunk[];
-  readonly decoded: Map<number, Promise<Uint8ClampedArray[]>>;
+  readonly decoded: Map<number, Promise<DecodedChunk>>;
   readonly abort: AbortController;
   /** Second at which this download starts (non-zero after a server restart). */
   readonly offset: number;
@@ -123,6 +125,7 @@ export class GlyphPlayer extends EventTarget {
       crt: options.crt ?? false,
       fill: options.fill ?? 0.25,
       sharp: options.sharp ?? true,
+      smooth: options.smooth ?? true,
     };
     this.renderer = new GlyphRenderer(canvas, { glyphs: this.look.glyphs, background: this.look.background, ...(options.glyphSize ? { glyphSize: options.glyphSize } : {}), ...(options.font ? { font: options.font } : {}) });
     const context = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
@@ -617,7 +620,9 @@ export class GlyphPlayer extends EventTarget {
   private drawStream(stream: StreamState): void {
     const info = stream.reader.info;
     if (!info) return;
-    const index = Math.max(0, Math.floor((this.currentTime - stream.offset) * info.fps));
+    const exact = Math.max(0, (this.currentTime - stream.offset) * info.fps);
+    const index = Math.floor(exact);
+    const between = this.look.smooth ? exact - index : 0;
     const position = stream.chunks.findIndex((chunk) => index >= chunk.start && index < chunk.start + chunk.frames);
     const chunk = stream.chunks[position];
     if (!chunk) {
@@ -626,11 +631,26 @@ export class GlyphPlayer extends EventTarget {
     }
     const nextChunk = stream.chunks[position + 1];
     if (nextChunk) this.decode(stream, info, nextChunk);
+    if (between > 0.05) {
+      const following = index + 1 < chunk.start + chunk.frames ? chunk : nextChunk?.start === index + 1 ? nextChunk : null;
+      if (following) {
+        void Promise.all([this.decode(stream, info, chunk), this.decode(stream, info, following)]).then(([current, next]) => {
+          if (this.stream !== stream) return;
+          const from = current.frames[index - chunk.start];
+          const to = next.frames[index + 1 - following.start];
+          const motion = next.motion[index + 1 - following.start];
+          if (!from || !to || !motion) return;
+          this.shownFrame = -1;
+          this.paint(interpolate(from, to, motion, info.cols, info.rows, between), info.cols, info.rows);
+        });
+        return;
+      }
+    }
     if (index === this.shownFrame && this.lastFrame) {
       this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
       return;
     }
-    void this.decode(stream, info, chunk).then((frames) => {
+    void this.decode(stream, info, chunk).then(({ frames }) => {
       if (this.stream !== stream) return;
       const frame = frames[index - chunk.start];
       if (!frame) return;
@@ -639,10 +659,10 @@ export class GlyphPlayer extends EventTarget {
     });
   }
 
-  private decode(stream: StreamState, info: StreamInfo, chunk: Chunk): Promise<Uint8ClampedArray[]> {
+  private decode(stream: StreamState, info: StreamInfo, chunk: Chunk): Promise<DecodedChunk> {
     let pending = stream.decoded.get(chunk.start);
     if (!pending) {
-      pending = decodeChunk(info, chunk.data);
+      pending = decodeChunkMotion(info, chunk.data);
       stream.decoded.set(chunk.start, pending);
       for (const key of stream.decoded.keys()) if (Math.abs(key - chunk.start) > info.chunkFrames * 3) stream.decoded.delete(key);
     }

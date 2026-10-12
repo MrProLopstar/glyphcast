@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { open, readFile } from 'node:fs/promises';
-import { decodeChunk, GlyphcastError, HEADER_SIZE, INDEX_TRAILER, indexLength, readHeader, readIndex, StreamReader, type Chunk, type StreamInfo } from './format.js';
+import { decodeChunkMotion, GlyphcastError, interpolate, type DecodedChunk, HEADER_SIZE, INDEX_TRAILER, indexLength, readHeader, readIndex, StreamReader, type Chunk, type StreamInfo } from './format.js';
 import { autoLevels, ease, luma, NEUTRAL, SHADOWS, type Levels } from './levels.js';
 import { probe } from './node.js';
 import { GLYPH_SETS, TINTS } from './looks.js';
@@ -194,7 +194,7 @@ const steady = (previous: Uint8ClampedArray | null, pixels: Uint8ClampedArray): 
 
 const MODES: readonly [string, TerminalMode][] = [['Брайль', 'braille'], ['символы', 'glyphs'], ['полублоки', 'blocks']];
 const FILLS = [0.25, 0.5, 0];
-const RUSSIAN: Readonly<Record<string, string>> = { ч: 'x', й: 'q', л: 'k', о: 'j', д: 'l', ь: 'm', п: 'g', с: 'c', х: '[', ъ: ']', и: 'b' };
+const RUSSIAN: Readonly<Record<string, string>> = { ч: 'x', м: 'v', й: 'q', л: 'k', о: 'j', д: 'l', ь: 'm', п: 'g', с: 'c', х: '[', ъ: ']', и: 'b' };
 
 interface Piece {
   readonly start: number;
@@ -441,6 +441,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     boost: options.boost ?? 1.3,
     fill: Math.max(0, FILLS.indexOf(options.fill ?? 0.25)),
     sharp: true,
+    smooth: true,
   };
   let previous: Uint8ClampedArray | null = null;
   let redraw = true;
@@ -450,7 +451,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   let playing = true;
   let quit = false;
   let levels = NEUTRAL;
-  const cache = new Map<number, Promise<Uint8ClampedArray[]>>();
+  const cache = new Map<number, Promise<DecodedChunk>>();
   const now = (): number => Math.min(total(), playing ? base + (performance.now() - startedAt) / 1000 : base);
   const sound = (): void => {
     const wanted = base;
@@ -476,10 +477,10 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       sound();
     }
   };
-  const frames = (piece: Piece): Promise<Uint8ClampedArray[]> => {
+  const frames = (piece: Piece): Promise<DecodedChunk> => {
     let pending = cache.get(piece.start);
     if (!pending) {
-      pending = piece.load().then((data) => decodeChunk(info, data));
+      pending = piece.load().then((data) => decodeChunkMotion(info, data));
       const key = piece.start;
       pending.catch(() => cache.delete(key));
       cache.set(piece.start, pending);
@@ -526,6 +527,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     else if (key === ']') look.boost = Math.min(2.5, Math.round((look.boost + 0.1) * 10) / 10);
     else if (key === 'b') look.fill = (look.fill + 1) % FILLS.length;
     else if (key === 'x') look.sharp = !look.sharp;
+    else if (key === 'v') look.smooth = !look.smooth;
     redraw = true;
   };
   const interactive = Boolean(input$.isTTY);
@@ -547,13 +549,23 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     while (!quit) {
       const time = now();
       const index = Math.min(Math.floor(time * info.fps), Math.max(0, Math.round(total() * info.fps) - 1));
+      const half = look.smooth && time * info.fps - index >= 0.5 ? 1 : 0;
+      const phase = index * 2 + half;
       const piece = library.pieces.find((item) => index >= item.start && index < item.start + item.frames);
-      if (piece && (index !== shown || redraw)) {
-        const frame = (await frames(piece).catch(() => []))[index - piece.start];
+      if (piece && (phase !== shown || redraw)) {
+        const decoded = await frames(piece).catch(() => null);
         const next = library.pieces.find((item) => item.start === piece.start + piece.frames);
         if (next) void frames(next).catch(() => undefined);
+        let frame = decoded?.frames[index - piece.start];
+        if (frame && half) {
+          const following = index + 1 < piece.start + piece.frames ? decoded : next && cache.has(next.start) ? await frames(next).catch(() => null) : null;
+          const at = index + 1 - (following === decoded ? piece.start : (next?.start ?? 0));
+          const to = following?.frames[at];
+          const motion = following?.motion[at];
+          if (to && motion) frame = interpolate(frame, to, motion, info.cols, info.rows, 0.5);
+        }
         if (frame) {
-          if (index !== shown) previous = steady(previous, frame);
+          if (phase !== shown) previous = steady(previous, frame);
           levels = ease(levels, autoLevels(previous ?? frame));
           const fitted = fitTerminal(info.cols, info.rows, view.width, view.height, cellRatio);
           const left = Math.ceil((view.width - fitted.width) / 2);
@@ -578,7 +590,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
             cellRatio,
           });
           if (!output.write(text.split('\n').map((line, row) => `\x1b[${top + row + 1};${left + 1}H${line}`).join(''))) await new Promise((resolve) => output.once('drain', resolve));
-          shown = index;
+          shown = phase;
           redraw = false;
         }
       }
@@ -588,8 +600,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         drawnHeight = view.height;
         redraw = true;
       }
-      const settings = `${MODES[look.mode]?.[0]}, ${(GLYPH_SETS[look.glyphs]?.[0] ?? '').toLowerCase()}, ${(TINTS[look.tint]?.[0] ?? '').toLowerCase()}, нас. ${look.boost.toFixed(1)}, фон ${FILLS[look.fill]}${look.sharp ? ', ×2' : ''}`;
-      const hints = interactive ? '  пробел ←→ m g c [ ] b x q' : '';
+      const settings = `${MODES[look.mode]?.[0]}, ${(GLYPH_SETS[look.glyphs]?.[0] ?? '').toLowerCase()}, ${(TINTS[look.tint]?.[0] ?? '').toLowerCase()}, нас. ${look.boost.toFixed(1)}, фон ${FILLS[look.fill]}${look.sharp ? ', ×2' : ''}${look.smooth ? ', плавно' : ''}`;
+      const hints = interactive ? '  пробел ←→ m g c [ ] b x v q' : '';
       const span = pictureWidth >= 72 ? pictureWidth : view.width;
       const offset = pictureWidth >= 72 ? pictureLeft : 0;
       const bar = Math.max(8, span - 24 - settings.length - hints.length);
@@ -604,7 +616,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         if (!output.write(`\x1b[${view.height + 1};1H\x1b[0m\x1b[2K\x1b[${view.height + 1};${offset + 1}H${line}`)) await new Promise((resolve) => output.once('drain', resolve));
       }
       if (playing && time >= total() && library.complete()) break;
-      await new Promise((resolve) => setTimeout(resolve, Math.max(5, 1000 / info.fps / 2)));
+      await new Promise((resolve) => setTimeout(resolve, Math.max(5, 1000 / info.fps / 4)));
     }
   } finally {
     if (interactive) {
