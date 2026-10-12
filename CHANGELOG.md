@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.7
+
+- Terminal player: an odd spare column goes to the left, balancing the scrollbar on the right
+
 ## 0.5.6
 
 - Terminal player: arrow keys seek again

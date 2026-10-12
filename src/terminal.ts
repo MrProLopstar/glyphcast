@@ -544,7 +544,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
           if (index !== shown) previous = steady(previous, frame);
           levels = ease(levels, autoLevels(previous ?? frame));
           const fitted = fitTerminal(info.cols, info.rows, view.width, view.height, cellRatio);
-          const left = Math.floor((view.width - fitted.width) / 2);
+          const left = Math.ceil((view.width - fitted.width) / 2);
           const top = Math.floor((view.height - fitted.height) / 2);
           const layout = `${left},${top},${fitted.width},${fitted.height}`;
           if (layout !== shownLayout) {
