@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- Streams are read at most 20 seconds ahead with low fetch priority, so audio starts at once on slow connections instead of after the whole file
+
 ## 0.3.0
 
 - `.gcast` v3: 6-bit brightness with 4:2:0 color, 8×4 blocks with motion vectors and quantized residuals; about half the size of v2 at the same grid. v2 files need re-encoding

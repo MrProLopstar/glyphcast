@@ -56,6 +56,8 @@ export type Source =
 export const sourceFor = (src: string, audio?: string): Source =>
   /\.gcast(?:$|[?#])/i.test(src) ? { type: 'gcast', src, ...(audio ? { audio } : {}) } : { type: 'video', src };
 
+const AHEAD = 20;
+
 type FrameVideo = HTMLVideoElement & { requestVideoFrameCallback?: (callback: () => void) => number };
 
 interface StreamState {
@@ -222,12 +224,13 @@ export class GlyphPlayer extends EventTarget {
     } else {
       this.media.removeAttribute('src');
     }
-    const response = await fetch(urls.src, { signal: state.abort.signal });
+    const response = await fetch(urls.src, { signal: state.abort.signal, priority: 'low' } as RequestInit);
     if (!response.ok || !response.body) throw new GlyphcastError(`Cannot load ${urls.src}: HTTP ${response.status}`);
     const reader = response.body.getReader();
     const first = new Promise<void>((resolve, reject) => {
       const pump = async (): Promise<void> => {
         for (;;) {
+          while (!state.abort.signal.aborted && this.stream === state && this.bufferedEnd - this.currentTime > AHEAD) await new Promise((wait) => setTimeout(wait, 250));
           const { done, value } = await reader.read();
           if (done) break;
           const chunks = state.reader.push(value);
