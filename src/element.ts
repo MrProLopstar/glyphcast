@@ -79,7 +79,7 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .volume { display: flex; align-items: center; }
 .volume input { width: 84px; margin-right: 6px; opacity: 0.75; transition: opacity 0.2s; accent-color: var(--accent); }
 .volume:hover input, .volume input:focus { opacity: 1; }
-.menu { position: absolute; right: 12px; bottom: 64px; min-width: 240px; max-height: calc(100% - 80px); overflow: auto; padding: 8px; border-radius: 12px; background: var(--panel); backdrop-filter: blur(10px); box-shadow: 0 12px 40px rgba(0,0,0,0.5); display: none; }
+.menu { position: absolute; z-index: 2; right: 12px; bottom: 64px; min-width: 240px; max-height: calc(100% - 80px); overflow: auto; padding: 8px; border-radius: 12px; background: var(--panel); backdrop-filter: blur(10px); box-shadow: 0 12px 40px rgba(0,0,0,0.5); display: none; }
 .menu.on { display: block; }
 .menu h4 { margin: 8px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.55); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 6px 6px; }

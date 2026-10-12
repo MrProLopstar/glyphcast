@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.3
+
+- The settings menu sits above the controls, so its last switch can be clicked
+
 ## 0.3.2
 
 - Tube screen look is visible at any size: scanlines follow the glyph rows, the screen bulges and the edges darken
