@@ -1,6 +1,9 @@
-import { spawn } from 'node:child_process';
-import { createReadStream } from 'node:fs';
-import { decodeChunk, GlyphcastError, StreamReader, type Chunk } from './format.js';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { open, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { decodeChunk, GlyphcastError, HEADER_SIZE, INDEX_TRAILER, indexLength, readHeader, readIndex, StreamReader, type Chunk, type StreamInfo } from './format.js';
 import { autoLevels, ease, glyphIndex, luma, NEUTRAL, type Levels } from './levels.js';
 import { probe } from './node.js';
 import { DEFAULT_GLYPHS } from './renderer.js';
@@ -18,6 +21,8 @@ export interface TerminalOptions {
   readonly output?: NodeJS.WriteStream;
   /** Path to ffmpeg, for video files. */
   readonly ffmpeg?: string;
+  /** Path to ffplay, which plays the sound embedded in a `.gcast`. Default `ffplay` from PATH; without it playback is silent. */
+  readonly ffplay?: string;
 }
 
 const channel = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
@@ -68,57 +73,211 @@ const screen = (output: NodeJS.WriteStream): { readonly width: number; readonly 
   return { width: output.columns || 120, height: Math.max(1, (output.rows || 40) - 1), close };
 };
 
-const bytesOf = async function* (input: string): AsyncGenerator<Uint8Array> {
-  if (/^https?:\/\//.test(input)) {
-    const response = await fetch(input);
-    if (!response.ok || !response.body) throw new GlyphcastError(`Cannot load ${input}: HTTP ${response.status}`);
-    const reader = response.body.getReader();
-    for (let part = await reader.read(); !part.done; part = await reader.read()) yield part.value;
-    return;
+interface Piece {
+  readonly start: number;
+  readonly frames: number;
+  readonly load: () => Promise<Uint8Array>;
+}
+
+interface Library {
+  readonly info: StreamInfo;
+  readonly pieces: Piece[];
+  readonly sound: Uint8Array | null;
+  readonly complete: () => boolean;
+  readonly close: () => void;
+}
+
+const fromFile = async (path: string): Promise<Library> => {
+  const file = await open(path, 'r');
+  const size = (await file.stat()).size;
+  const read = async (offset: number, length: number): Promise<Uint8Array> => {
+    const bytes = new Uint8Array(length);
+    await file.read(bytes, 0, length, offset);
+    return bytes;
+  };
+  const info = readHeader(await read(0, HEADER_SIZE));
+  const length = indexLength(await read(Math.max(0, size - INDEX_TRAILER), Math.min(size, INDEX_TRAILER)));
+  if (length) {
+    const entries = readIndex(await read(size - length, length));
+    const head = await read(HEADER_SIZE, (entries[0]?.offset ?? HEADER_SIZE) - HEADER_SIZE);
+    const sound = new StreamReader(info).push(head).filter((chunk) => chunk.frames === 0);
+    const pieces = entries.map((entry) => ({
+      start: entry.start,
+      frames: entry.frames,
+      load: async () => {
+        const top = await read(entry.offset, 4);
+        const bytes = new DataView(top.buffer).getUint32(0, true);
+        return read(entry.offset + 6, bytes);
+      },
+    }));
+    return { info, pieces, sound: sound.length ? concat(sound.map((chunk) => chunk.data)) : null, complete: () => true, close: () => void file.close() };
   }
-  yield* createReadStream(input) as AsyncIterable<Buffer>;
+  await file.close();
+  const reader = new StreamReader();
+  const chunks = reader.push(new Uint8Array(await readFile(path)));
+  return fromChunks(reader.info ?? info, chunks, () => true);
 };
 
-const playStream = async (input: string, options: TerminalOptions, output: NodeJS.WriteStream): Promise<void> => {
+const concat = (parts: readonly Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+};
+
+const fromChunks = (info: StreamInfo, chunks: Chunk[], complete: () => boolean): Library => {
+  const audio = chunks.filter((chunk) => chunk.frames === 0).map((chunk) => chunk.data);
+  const pieces = chunks.filter((chunk) => chunk.frames > 0).map((chunk) => ({ start: chunk.start, frames: chunk.frames, load: () => Promise.resolve(chunk.data) }));
+  return { info, pieces, sound: audio.length ? concat(audio) : null, complete, close: () => undefined };
+};
+
+const fromUrl = async (url: string): Promise<Library> => {
+  const response = await fetch(url);
+  if (!response.ok || !response.body) throw new GlyphcastError(`Cannot load ${url}: HTTP ${response.status}`);
+  const body = response.body.getReader();
   const reader = new StreamReader();
   const chunks: Chunk[] = [];
   let done = false;
-  const download = (async () => {
-    for await (const bytes of bytesOf(input)) chunks.push(...reader.push(bytes));
+  while (!reader.info || !chunks.some((chunk) => chunk.frames > 0)) {
+    const part = await body.read();
+    if (part.done) throw new GlyphcastError('The stream has no frames');
+    chunks.push(...reader.push(part.value));
+  }
+  const library = fromChunks(reader.info, chunks, () => done);
+  void (async () => {
+    for (let part = await body.read(); !part.done; part = await body.read()) {
+      for (const chunk of reader.push(part.value)) if (chunk.frames > 0) library.pieces.push({ start: chunk.start, frames: chunk.frames, load: () => Promise.resolve(chunk.data) });
+    }
     done = true;
   })();
-  while (!reader.info || chunks.length === 0) {
-    if (done) throw new GlyphcastError('The stream has no frames');
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  const info = reader.info;
+  return library;
+};
+
+const clock = (seconds: number): string => {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const rest = `${String(Math.floor((total % 3600) / 60)).padStart(hours ? 2 : 1, '0')}:${String(total % 60).padStart(2, '0')}`;
+  return hours ? `${hours}:${rest}` : rest;
+};
+
+const sounds = (library: Library, ffplay: string): { readonly start: (at: number) => void; readonly stop: () => void; readonly close: () => void } => {
+  if (!library.sound) return { start: () => undefined, stop: () => undefined, close: () => undefined };
+  const folder = mkdtempSync(join(tmpdir(), 'glyphcast-'));
+  const file = join(folder, 'sound');
+  writeFileSync(file, library.sound);
+  let child: ChildProcess | null = null;
+  let missing = false;
+  const stop = (): void => {
+    child?.kill();
+    child = null;
+  };
+  process.once('exit', stop);
+  return {
+    start: (at) => {
+      stop();
+      if (missing) return;
+      child = spawn(ffplay, ['-nodisp', '-autoexit', '-loglevel', 'quiet', '-ss', at.toFixed(2), file], { stdio: 'ignore' });
+      child.on('error', () => (missing = true));
+    },
+    stop,
+    close: () => {
+      stop();
+      rmSync(folder, { recursive: true, force: true });
+    },
+  };
+};
+
+const playStream = async (input: string, options: TerminalOptions, output: NodeJS.WriteStream): Promise<void> => {
+  const library = /^https?:\/\//.test(input) ? await fromUrl(input) : await fromFile(input);
+  const { info } = library;
+  const total = (): number => (info.frameCount || library.pieces.reduce((sum, piece) => Math.max(sum, piece.start + piece.frames), 0)) / info.fps;
+  const audio = sounds(library, options.ffplay ?? 'ffplay');
   const view = screen(output);
+  const input$ = process.stdin;
+  let base = 0;
+  let startedAt = performance.now();
+  let playing = true;
+  let quit = false;
   let levels = NEUTRAL;
-  const decoded = { start: -1, frames: [] as Uint8ClampedArray[] };
-  const started = performance.now();
+  const cache = new Map<number, Promise<Uint8ClampedArray[]>>();
+  const now = (): number => Math.min(total(), playing ? base + (performance.now() - startedAt) / 1000 : base);
+  const jump = (seconds: number): void => {
+    base = Math.max(0, Math.min(total(), seconds));
+    startedAt = performance.now();
+    if (playing) audio.start(base);
+  };
+  const toggle = (): void => {
+    if (playing) {
+      base = now();
+      playing = false;
+      audio.stop();
+    } else {
+      playing = true;
+      startedAt = performance.now();
+      audio.start(base);
+    }
+  };
+  const frames = (piece: Piece): Promise<Uint8ClampedArray[]> => {
+    let pending = cache.get(piece.start);
+    if (!pending) {
+      pending = piece.load().then((data) => decodeChunk(info, data));
+      cache.set(piece.start, pending);
+      for (const key of cache.keys()) if (Math.abs(key - piece.start) > info.chunkFrames * 2) cache.delete(key);
+    }
+    return pending;
+  };
+  const keys = (data: Buffer): void => {
+    const key = data.toString();
+    if (key === 'q' || key === '\u0003' || key === '\u001b') quit = true;
+    else if (key === ' ' || key === 'k') toggle();
+    else if (key === '\u001b[D') jump(now() - 5);
+    else if (key === '\u001b[C') jump(now() + 5);
+    else if (key === 'j') jump(now() - 10);
+    else if (key === 'l') jump(now() + 10);
+    else if (/^[0-9]$/.test(key)) jump((Number(key) / 10) * total());
+  };
+  const interactive = Boolean(input$.isTTY);
+  if (interactive) {
+    input$.setRawMode(true);
+    input$.resume();
+    input$.on('data', keys);
+  }
+  audio.start(0);
   try {
-    for (;;) {
-      const index = Math.floor(((performance.now() - started) / 1000) * info.fps);
-      const chunk = chunks.find((item) => index >= item.start && index < item.start + item.frames);
-      if (!chunk) {
-        if (done && index >= chunks.reduce((sum, item) => sum + item.frames, 0)) break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        continue;
+    let shown = -1;
+    while (!quit) {
+      const time = now();
+      const index = Math.min(Math.floor(time * info.fps), Math.max(0, Math.round(total() * info.fps) - 1));
+      const piece = library.pieces.find((item) => index >= item.start && index < item.start + item.frames);
+      if (piece && index !== shown) {
+        const frame = (await frames(piece))[index - piece.start];
+        const next = library.pieces.find((item) => item.start === piece.start + piece.frames);
+        if (next) void frames(next);
+        if (frame) {
+          levels = ease(levels, autoLevels(frame));
+          output.write(`\x1b[H${ansiFrame(frame, info.cols, info.rows, 4, levels, { ...options, width: view.width, height: view.height })}`);
+          shown = index;
+        }
       }
-      if (decoded.start !== chunk.start) {
-        decoded.frames = await decodeChunk(info, chunk.data);
-        decoded.start = chunk.start;
-      }
-      const frame = decoded.frames[index - chunk.start];
-      if (frame) {
-        levels = ease(levels, autoLevels(frame));
-        output.write(`\x1b[H${ansiFrame(frame, info.cols, info.rows, 4, levels, { ...options, width: view.width, height: view.height })}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, Math.max(1, started + ((index + 1) * 1000) / info.fps - performance.now())));
+      const share = total() > 0 ? time / total() : 0;
+      const bar = Math.max(10, view.width - 52);
+      const filled = Math.round(share * bar);
+      output.write(`\x1b[${view.height + 1};1H\x1b[0m\x1b[2K${playing ? '▶' : '❚❚'} ${clock(time)} / ${clock(total())} ${'█'.repeat(filled)}${'░'.repeat(bar - filled)}${interactive ? '  space ←→ j l 0-9 q' : ''}`);
+      if (playing && time >= total() && library.complete()) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.max(5, 1000 / info.fps / 2)));
     }
   } finally {
+    if (interactive) {
+      input$.off('data', keys);
+      input$.setRawMode(false);
+      input$.pause();
+    }
+    audio.close();
+    library.close();
     view.close();
-    await download.catch(() => undefined);
   }
 };
 
@@ -148,7 +307,8 @@ const playVideo = async (input: string, options: TerminalOptions, output: NodeJS
 
 /**
  * Plays a `.gcast` file, a `.gcast` URL (for example a `glyphcast serve` stream) or any video file in the
- * terminal with 24-bit color glyphs. Resolves when playback ends; Ctrl+C restores the screen.
+ * terminal with 24-bit color glyphs. For `.gcast` there are controls: Space pauses, ←/→ seek 5 s, J/L 10 s, 0–9 jump,
+ * Q quits; embedded sound plays through ffplay. Large files with an index are read from disk chunk by chunk.
  */
 export const playInTerminal = (input: string, options: TerminalOptions = {}): Promise<void> => {
   const output = options.output ?? process.stdout;

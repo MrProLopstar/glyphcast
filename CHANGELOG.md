@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- `glyphcast play` for `.gcast` has controls: Space pauses, ←/→ seek 5 s, J/L 10 s, 0–9 jump, Q quits, with a status bar; embedded sound plays through ffplay; indexed files are read from disk chunk by chunk, so feature films open at once
+
 ## 0.5.0
 
 - Seeking past the loaded part: files end with a chunk index, and the player fetches the needed place with a range request
