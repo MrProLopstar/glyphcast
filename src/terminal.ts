@@ -294,7 +294,10 @@ const fromFile = async (path: string): Promise<Library> => {
 const fromRanges = async (url: string): Promise<Library | null> => {
   const probe = await fetch(url, { headers: { range: `bytes=-${INDEX_TRAILER}` } });
   const size = Number(/\/(\d+)$/.exec(probe.headers.get('content-range') ?? '')?.[1] ?? 0);
-  if (probe.status !== 206 || !size) return null;
+  if (probe.status !== 206 || !size) {
+    await probe.body?.cancel();
+    return null;
+  }
   await probe.arrayBuffer();
   const read = async (offset: number, length: number): Promise<Uint8Array> => {
     if (length <= 0) return new Uint8Array(0);

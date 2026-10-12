@@ -14,7 +14,7 @@ const USAGE = `glyphcast: video as glyphs
       --poster saves a frame as <name>.jpg for the player; several videos are encoded one by one;
       black bars that stay black through the whole video are cut, --no-crop keeps them
   glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
-  glyphcast play <file.gcast | stream URL | video | hub:name> [--cols width] [--subtitles file.vtt]
+  glyphcast play <file.gcast | stream URL | video | hub:name | live:room> [--cols width] [--subtitles file.vtt]
       plays in the terminal; for .gcast: Space pause, ←/→ 5 s, J/L 10 s, 0-9 jump, M render mode, G glyphs,
       C colors, [ ] saturation, B background, Q quit; sound via ffplay
   glyphcast hub [search]
@@ -105,6 +105,11 @@ glyphcast play hub:<name>   files from ${files}`);
     return;
   }
   if (command === 'play') {
+    if (input?.startsWith('live:')) {
+      const { files } = await hub();
+      await playInTerminal(`${files}/live/${encodeURIComponent(input.slice(5))}.gcast`, { title: input });
+      return;
+    }
     if (input?.startsWith('hub:')) {
       const name = input.slice(4);
       const { files, videos } = await hub();

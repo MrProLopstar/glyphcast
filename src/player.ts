@@ -310,7 +310,10 @@ export class GlyphPlayer extends EventTarget {
   private async loadIndex(state: StreamState): Promise<void> {
     try {
       const tail = await fetch(state.url, { headers: { range: `bytes=-${INDEX_TRAILER}` }, signal: state.abort.signal });
-      if (tail.status !== 206) return;
+      if (tail.status !== 206) {
+        await tail.body?.cancel();
+        return;
+      }
       const length = indexLength(new Uint8Array(await tail.arrayBuffer()));
       if (!length) return;
       const chunk = await fetch(state.url, { headers: { range: `bytes=-${length}` }, signal: state.abort.signal });

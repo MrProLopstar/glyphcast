@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.0
+
+- Live streams: `glyphcast play live:<room>` watches a gcast hub broadcast in the terminal, and the player plays endless `.gcast` streams without leaving extra connections open
+
 ## 0.12.0
 
 - Terminal player speaks English and its status bar is a row of buttons: click the mode, glyph set, colors, saturation, background, 2x, smooth or ✕ to change them, click the bar to seek; the bar spans the picture width
