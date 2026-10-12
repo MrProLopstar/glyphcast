@@ -23,10 +23,16 @@ const USAGE = `glyphcast: video as glyphs
       uploads to the gcast hub with the key from GLYPHCAST_HUB_KEY; licenses: CC0, CC-BY, CC-BY-SA,
       CC-BY-NC, public-domain list the video, own keeps it reachable by link only
   glyphcast info <file.gcast>
-  glyphcast serve [--port 8787] [--dir videos] [--no-youtube] [--yt-dlp path] [--ffmpeg path]
+  glyphcast serve [--port 8787] [--host 127.0.0.1] [--dir videos] [--no-youtube] [--yt-dlp path] [--ffmpeg path]
       live .gcast streams from YouTube links and videos in --dir, for <glyph-player>
 
 encode and micro need ffmpeg and ffprobe, serve needs yt-dlp and ffmpeg.`;
+
+const number = (name: string, value: string): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`--${name} needs a positive number, got "${value}"`);
+  return parsed;
+};
 
 const kb = (bytes: number): string => `${(bytes / 1024).toFixed(1)} KB`;
 
@@ -48,6 +54,7 @@ const main = async (): Promise<void> => {
       subtitles: { type: 'string' },
       audio: { type: 'string' },
       port: { type: 'string' },
+      host: { type: 'string' },
       dir: { type: 'string' },
       'no-youtube': { type: 'boolean' },
       'yt-dlp': { type: 'string' },
@@ -58,9 +65,10 @@ const main = async (): Promise<void> => {
   const [command, input] = positionals;
   const inputs = positionals.slice(1);
   if (command === 'serve') {
-    const port = values.port ? Number(values.port) : 8787;
-    await serve({ port, ...(values.dir ? { dir: values.dir } : {}), youtube: !values['no-youtube'], ...(values['yt-dlp'] ? { ytDlp: values['yt-dlp'] } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}), onRequest: (line) => console.log(line) });
-    console.log(`glyphcast serve: http://127.0.0.1:${port}`);
+    const port = values.port ? number('port', values.port) : 8787;
+    const host = values.host ?? '127.0.0.1';
+    await serve({ port, host, ...(values.dir ? { dir: values.dir } : {}), youtube: !values['no-youtube'], ...(values['yt-dlp'] ? { ytDlp: values['yt-dlp'] } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}), onRequest: (line) => console.log(line) });
+    console.log(`glyphcast serve: http://${host.includes(':') ? `[${host}]` : host}:${port}`);
     return;
   }
   if (command === 'publish') {
@@ -108,7 +116,7 @@ glyphcast play hub:<name>   files from ${files}`);
       await playInTerminal(`${files}/v/${id}.gcast`, { title: video?.title ?? `hub:${name}`, ...(subtitles ? { subtitles } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
       return;
     }
-    await playInTerminal(input, { ...(values.subtitles ? { subtitles: readFileSync(values.subtitles, 'utf8') } : {}), ...(values.cols ? { cols: Number(values.cols) } : {}), ...(values.fps ? { fps: Number(values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
+    await playInTerminal(input, { ...(values.subtitles ? { subtitles: readFileSync(values.subtitles, 'utf8') } : {}), ...(values.cols ? { cols: number('cols', values.cols) } : {}), ...(values.fps ? { fps: number('fps', values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
     return;
   }
   if (command === 'info') {
@@ -123,7 +131,7 @@ glyphcast play hub:<name>   files from ${files}`);
   }
   if (command === 'micro') {
     const out = values.out ?? `${basename(input, extname(input))}.glyphs.mp4`;
-    const { cols, rows } = await encodeMicroVideo(input, out, { ...(values.cols ? { cols: Number(values.cols) } : {}), ...(values.fps ? { fps: Number(values.fps) } : {}) });
+    const { cols, rows } = await encodeMicroVideo(input, out, { ...(values.cols ? { cols: number('cols', values.cols) } : {}), ...(values.fps ? { fps: number('fps', values.fps) } : {}) });
     console.log(`${out}: ${cols}×${rows}, ${kb(statSync(out).size)}; play it with GlyphVideo and prescaled: true`);
     return;
   }
@@ -166,9 +174,9 @@ const encode = async (input: string, out: string, values: { readonly cols?: stri
       const elapsed = (performance.now() - started) / 1000;
       process.stdout.write(`\r${basename(input)}: ${(share * 100).toFixed(1)}% (${clock(done)} / ${clock(total)}), ${(done / elapsed).toFixed(1)}× real time, about ${clock((elapsed / share) * (1 - share))} left   `);
     },
-    ...(values.cols ? { cols: Number(values.cols) } : {}),
-    ...(values.fps ? { fps: Number(values.fps) } : {}),
-    ...(values.chunk ? { chunkSeconds: Number(values.chunk) } : {}),
+    ...(values.cols ? { cols: number('cols', values.cols) } : {}),
+    ...(values.fps ? { fps: number('fps', values.fps) } : {}),
+    ...(values.chunk ? { chunkSeconds: number('chunk', values.chunk) } : {}),
     ...(values.threshold ? { threshold: Number(values.threshold) } : {}),
     ...(values.embed ? { embedAudio: true } : {}),
     ...(values['no-crop'] ? { crop: false } : {}),

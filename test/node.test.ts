@@ -77,3 +77,29 @@ describe('terminal', () => {
     expect(ansiFrame(pixels, 2, 2, 3, NEUTRAL, { mode: 'blocks' }).replace(/\x1b\[[0-9;]*m/g, '')).toMatch(/^▀+(\n▀+)*$/);
   });
 });
+
+describe('serve without ffmpeg', () => {
+  it('answers 404, 416 and HEAD for served files, and rejects a busy port', async () => {
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(join(dir, 'tiny.gcast'), new Uint8Array(100));
+    const server = await serve({ port: 0, dir, youtube: false });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('no port');
+    const base = `http://127.0.0.1:${address.port}/files/`;
+    try {
+      expect((await fetch(`${base}missing.gcast`)).status).toBe(404);
+      expect((await fetch(`${base}..%2F..%2Fetc%2Fpasswd`)).status).toBe(400);
+      const past = await fetch(`${base}tiny.gcast`, { headers: { range: 'bytes=500-' } });
+      expect(past.status).toBe(416);
+      expect(past.headers.get('content-range')).toBe('bytes */100');
+      const head = await fetch(`${base}tiny.gcast`, { method: 'HEAD' });
+      expect(head.status).toBe(200);
+      expect(head.headers.get('content-length')).toBe('100');
+      const tail = await fetch(`${base}tiny.gcast`, { headers: { range: 'bytes=-10' } });
+      expect((await tail.arrayBuffer()).byteLength).toBe(10);
+      await expect(serve({ port: address.port })).rejects.toThrow();
+    } finally {
+      server.close();
+    }
+  });
+});

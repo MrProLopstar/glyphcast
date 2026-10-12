@@ -88,6 +88,7 @@ export const serve = (options: ServeOptions = {}): Promise<Server> => {
       audio: audio ?? video,
       info: { title: data.title ?? '', duration: Number(data.duration ?? 0), thumbnail: data.thumbnail ?? null, uploader: data.uploader ?? null },
     };
+    for (const [key, value] of cache) if (Date.now() - value.at >= 30 * 60_000) cache.delete(key);
     cache.set(url, entry);
     return entry;
   };
@@ -116,11 +117,15 @@ export const serve = (options: ServeOptions = {}): Promise<Server> => {
     const [width, height] = aspect.trim().split(',').map(Number);
     const gridRows = width && height ? Math.max(1, Math.round(cols * (height / width) * 0.6)) : rows;
     response.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-glyphcast-duration': String(source.info.duration) });
-    const encoder = new Encoder({ cols, rows: gridRows, fps, chunkFrames: Math.max(1, Math.round(fps)), threshold, frameCount: source.info.duration ? Math.max(0, Math.round((source.info.duration - start) * fps)) : 0 }, (bytes) => response.write(bytes));
+    const child = spawn(ffmpeg, ['-v', 'error', '-ss', String(start), '-i', source.video, '-an', '-vf', `fps=${fps},scale=${cols}:${gridRows}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const encoder = new Encoder({ cols, rows: gridRows, fps, chunkFrames: Math.max(1, Math.round(fps)), threshold, frameCount: source.info.duration ? Math.max(0, Math.round((source.info.duration - start) * fps)) : 0 }, (bytes) => {
+      if (!response.destroyed && !response.write(bytes)) child.stdout.pause();
+    });
+    response.on('drain', () => child.stdout.resume());
     const frameSize = cols * gridRows * 3;
     let pending: Buffer = Buffer.alloc(0);
-    const child = spawn(ffmpeg, ['-v', 'error', '-ss', String(start), '-i', source.video, '-an', '-vf', `fps=${fps},scale=${cols}:${gridRows}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
     request.on('close', () => child.kill('SIGKILL'));
+    child.on('error', () => response.end());
     child.stdout.on('data', (chunk: Buffer) => {
       pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
       while (pending.length >= frameSize) {
@@ -139,24 +144,34 @@ export const serve = (options: ServeOptions = {}): Promise<Server> => {
     response.writeHead(200, { 'content-type': 'audio/webm', 'cache-control': 'no-store' });
     const child = spawn(ffmpeg, ['-v', 'error', '-ss', String(start), '-i', source.audio, '-vn', '-c:a', 'libopus', '-b:a', '64k', '-f', 'webm', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
     child.stdout.pipe(response);
+    child.on('error', () => response.end());
     request.on('close', () => child.kill('SIGKILL'));
   };
 
   const file = (request: IncomingMessage, response: ServerResponse, name: string): void => {
     const path = inside(decodeURIComponent(name));
-    const size = statSync(path).size;
+    const stat = statSync(path, { throwIfNoEntry: false });
+    if (!stat?.isFile()) return json(response, 404, { error: 'No such file' });
+    const size = stat.size;
+    const head = request.method === 'HEAD';
     const type = TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream';
     const range = /bytes=(\d*)-(\d*)/.exec(request.headers.range ?? '');
     if (range) {
       const suffix = !range[1] && range[2];
       const start = suffix ? Math.max(0, size - Number(range[2])) : Number(range[1] || 0);
       const end = range[2] && !suffix ? Math.min(Number(range[2]), size - 1) : size - 1;
+      if (start >= size || start > end) {
+        response.writeHead(416, { 'content-range': `bytes */${size}` }).end();
+        return;
+      }
       response.writeHead(206, { 'content-type': type, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1, 'accept-ranges': 'bytes' });
-      createReadStream(path, { start, end }).pipe(response);
+      if (head) response.end();
+      else createReadStream(path, { start, end }).on('error', () => response.destroy()).pipe(response);
       return;
     }
     response.writeHead(200, { 'content-type': type, 'content-length': size, 'accept-ranges': 'bytes' });
-    createReadStream(path).pipe(response);
+    if (head) response.end();
+    else createReadStream(path).on('error', () => response.destroy()).pipe(response);
   };
 
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
@@ -165,6 +180,7 @@ export const serve = (options: ServeOptions = {}): Promise<Server> => {
     response.setHeader('access-control-expose-headers', 'x-glyphcast-duration, content-length');
     if (request.method === 'OPTIONS') {
       response.setHeader('access-control-allow-headers', '*');
+      response.setHeader('access-control-allow-methods', 'GET, HEAD, OPTIONS');
       response.writeHead(204).end();
       return;
     }
@@ -184,5 +200,11 @@ export const serve = (options: ServeOptions = {}): Promise<Server> => {
       else response.end();
     });
   });
-  return new Promise((done) => server.listen(options.port ?? 8787, options.host ?? '127.0.0.1', () => done(server)));
+  return new Promise((done, fail) => {
+    server.once('error', fail);
+    server.listen(options.port ?? 8787, options.host ?? '127.0.0.1', () => {
+      server.off('error', fail);
+      done(server);
+    });
+  });
 };
