@@ -14,7 +14,8 @@ const USAGE = `glyphcast: video as glyphs
       --poster saves a frame as <name>.jpg for the player; several videos are encoded one by one
   glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
   glyphcast play <file.gcast | stream URL | video> [--cols width]
-      plays in the terminal; for .gcast: Space pause, ←/→ 5 s, J/L 10 s, 0-9 jump, Q quit, sound via ffplay
+      plays in the terminal; for .gcast: Space pause, ←/→ 5 s, J/L 10 s, 0-9 jump, M render mode, G glyphs,
+      C colors, [ ] saturation, B background, Q quit; sound via ffplay
   glyphcast info <file.gcast>
   glyphcast serve [--port 8787] [--dir videos] [--no-youtube] [--yt-dlp path] [--ffmpeg path]
       live .gcast streams from YouTube links and videos in --dir, for <glyph-player>

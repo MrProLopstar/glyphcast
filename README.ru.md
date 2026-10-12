@@ -74,7 +74,7 @@ import { GlyphPlayer } from 'glyphcast/vue';
 npx glyphcast encode movie.mp4 --cols 180 --embed --poster    # один файл со звуком Opus внутри и постер movie.jpg
 npx glyphcast encode *.mp4 --embed                            # несколько видео подряд, с прогрессом и оставшимся временем
 npx glyphcast encode movie.mp4 --cols 180 --audio movie.m4a   # звук отдельным файлом
-npx glyphcast play movie.gcast                                  # в терминале: пробел пауза, ←/→ перемотка, Q выход, звук через ffplay
+npx glyphcast play movie.gcast                                  # в терминале: пробел пауза, ←/→ перемотка, M отрисовка, G символы, C цвет, [ ] насыщенность, B фон, Q выход
 npx glyphcast serve --dir ./videos                              # живые потоки
 npx glyphcast micro movie.mp4 --cols 180                        # крошечное H.264 размером с сетку
 ```

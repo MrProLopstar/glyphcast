@@ -61,6 +61,10 @@ describe('terminal', () => {
     const plain = text.replace(/\x1b\[[0-9;]*m/g, '');
     expect(plain.split('\n')).toEqual([' @', expect.stringMatching(/^..$/)]);
     expect(text).toContain('\x1b[38;2;');
-    expect(ansiFrame(pixels, 2, 2, 3, NEUTRAL, { width: 1, height: 1 }).replace(/\x1b\[[0-9;]*m/g, '')).toBe(' ');
+    expect([...ansiFrame(pixels, 2, 2, 3, NEUTRAL, { width: 1, height: 1 }).replace(/\x1b\[[0-9;]*m/g, '')]).toHaveLength(1);
+    const braille = ansiFrame(pixels, 2, 2, 3, NEUTRAL, { mode: 'braille', fill: 0.25 });
+    expect(braille).toMatch(/[⠀-⣿]/);
+    expect(braille).toContain('\x1b[48;2;');
+    expect(ansiFrame(pixels, 2, 2, 3, NEUTRAL, { mode: 'blocks' }).replace(/\x1b\[[0-9;]*m/g, '')).toMatch(/^▀+(\n▀+)*$/);
   });
 });

@@ -1,4 +1,5 @@
 import { GlyphPlayer, sourceFor, type LookOptions, type Source } from './player.js';
+import { GLYPH_SETS, TINTS } from './looks.js';
 import type { RenderMode } from './renderer.js';
 
 const ICONS = {
@@ -14,28 +15,12 @@ const ICONS = {
   exit: 'M8 4h2v6H4V8h4zm6 0h2v4h4v2h-6zM4 14h6v6H8v-4H4zm10 0h6v2h-4v4h-2z',
 } as const;
 
-const GLYPH_SETS: readonly (readonly [string, string])[] = [
-  ['Классика', ' .:-=+*#%@'],
-  ['Блоки', ' ░▒▓█'],
-  ['Плотные', " .'`^,:;Il!i~+_-?][}{1)(|tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"],
-  ['Точки', ' ·•●'],
-  ['Двоичные', ' 01'],
-  ['Матрица', ' ｰｨｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏ'],
-];
-
 const MODES: readonly (readonly [string, RenderMode])[] = [
   ['Символы', 'glyphs'],
   ['Брайль', 'braille'],
   ['Растр', 'halftone'],
 ];
 
-const TINTS: readonly (readonly [string, string | null])[] = [
-  ['Как в видео', null],
-  ['Матрица', '#33ff66'],
-  ['Ламповый', '#ffb35c'],
-  ['Неон', '#5ce1ff'],
-  ['Монохром', '#e8ecef'],
-];
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const GRIDS = [80, 120, 160, 200, 240, 320];

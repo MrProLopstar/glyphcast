@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2
+
+- Terminal player has the browser defaults (braille, saturation 1.3, background fill 0.25, frame smoothing) and keys to change them: M render mode (braille, glyphs, half blocks), G glyph set, C colors, [ ] saturation, B background
+- The picture fits the terminal and follows window resizes; terminals that allow it are asked to match the video proportions
+
 ## 0.5.1
 
 - `glyphcast play` for `.gcast` has controls: Space pauses, ←/→ seek 5 s, J/L 10 s, 0–9 jump, Q quits, with a status bar; embedded sound plays through ffplay; indexed files are read from disk chunk by chunk, so feature films open at once
