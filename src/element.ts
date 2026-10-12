@@ -165,13 +165,15 @@ export class GlyphPlayerElement extends HTMLElement {
     </div>
   </div>
 </div>`;
+    const frame = this.root.querySelector<HTMLDivElement>('.player');
+    if (!frame) throw new Error('Missing .player');
+    this.frame = frame;
     const find = (selector: string): HTMLElement => {
-      const node = this.root.querySelector<HTMLElement>(selector);
+      const node = frame.querySelector<HTMLElement>(selector);
       if (!node) throw new Error(`Missing ${selector}`);
       return node;
     };
     this.$ = find;
-    this.frame = find('.player') as HTMLDivElement;
     this.player = new GlyphPlayer(find('canvas') as HTMLCanvasElement, this.look());
     this.wire();
   }
@@ -350,7 +352,7 @@ export class GlyphPlayerElement extends HTMLElement {
     this.frame.addEventListener('pointermove', () => this.wake());
     this.frame.addEventListener('pointerleave', () => this.sleep(600));
     this.frame.addEventListener('keydown', (event) => this.key(event));
-    this.root.addEventListener('click', (event) => {
+    this.frame.addEventListener('click', (event) => {
       if (!(event.target as HTMLElement).closest('.menu, .settings')) this.$('.menu').classList.remove('on');
     });
     document.addEventListener('fullscreenchange', () => this.update());

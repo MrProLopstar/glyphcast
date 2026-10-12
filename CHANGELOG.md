@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5
+
+- Controls keep updating in Document picture-in-picture
+
 ## 0.3.4
 
 - Streams with audio pause the sound and show buffering when frames run out, instead of playing sound over a frozen picture
