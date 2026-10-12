@@ -1,4 +1,4 @@
-import { decodeChunk, GlyphcastError, StreamReader, type Chunk, type StreamInfo } from './format.js';
+import { audioType, decodeChunk, GlyphcastError, StreamReader, type Chunk, type StreamInfo } from './format.js';
 import { autoLevels, ease, NEUTRAL, type Levels } from './levels.js';
 import { captionAt, parseCaptions, type Cue } from './captions.js';
 import { DEFAULT_GLYPHS, GlyphRenderer, type RenderMode } from './renderer.js';
@@ -177,6 +177,18 @@ export class GlyphPlayer extends EventTarget {
     this.redraw();
   }
 
+  /**
+   * Matches glyph size to the displayed height in device pixels, so the canvas maps onto screen pixels instead of
+   * being scaled, which makes small glyphs shimmer.
+   */
+  fit(height: number): void {
+    const size = Math.min(48, Math.max(6, Math.floor(height / this.grid().rows)));
+    if (size === this.renderer.cellHeight) return;
+    this.renderer.setGlyphSize(size);
+    this.shownFrame = -1;
+    this.redraw();
+  }
+
   private redraw(): void {
     if (this.lastFrame && this.stream) this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
     else this.draw();
@@ -188,7 +200,7 @@ export class GlyphPlayer extends EventTarget {
     const video = this.media;
     if (this.source?.type === 'video' && this.source.prescaled && video.videoWidth > 0) return { cols: video.videoWidth, rows: video.videoHeight };
     const aspect = video.videoWidth > 0 ? video.videoHeight / video.videoWidth : 9 / 16;
-    return { cols: this.look.cols, rows: Math.max(1, Math.round(this.look.cols * aspect * (this.renderer.cellWidth / this.renderer.cellHeight))) };
+    return { cols: this.look.cols, rows: Math.max(1, Math.round(this.look.cols * aspect * 0.6)) };
   }
 
   /** Loads a source and shows its first frame. Resolves once metadata is known. */
@@ -230,14 +242,22 @@ export class GlyphPlayer extends EventTarget {
     if (!response.ok || !response.body) throw new GlyphcastError(`Cannot load ${urls.src}: HTTP ${response.status}`);
     const reader = response.body.getReader();
     const first = new Promise<void>((resolve, reject) => {
+      const sound: Uint8Array[] = [];
       const pump = async (): Promise<void> => {
         for (;;) {
           while (!state.abort.signal.aborted && this.stream === state && this.bufferedEnd - this.currentTime > AHEAD) await new Promise((wait) => setTimeout(wait, 250));
           const { done, value } = await reader.read();
           if (done) break;
           const chunks = state.reader.push(value);
-          state.chunks.push(...chunks);
-          if (state.reader.info && (chunks.length > 0 || state.chunks.length > 0)) resolve();
+          for (const chunk of chunks) {
+            if (chunk.frames > 0) state.chunks.push(chunk);
+            else sound.push(chunk.data);
+          }
+          if (sound.length > 0 && state.chunks.length > 0 && !this.mediaClock) {
+            this.media.src = URL.createObjectURL(new Blob(sound as BlobPart[], { type: audioType(sound[0] ?? new Uint8Array()) }));
+            this.mediaClock = true;
+          }
+          if (state.reader.info && state.chunks.length > 0) resolve();
           if (chunks.length > 0) this.emit('progress');
         }
         state.done = true;
@@ -307,7 +327,7 @@ export class GlyphPlayer extends EventTarget {
   /** End of the downloaded part, in seconds. */
   get bufferedEnd(): number {
     const stream = this.stream;
-    if (stream?.reader.info) return stream.offset + stream.chunks.reduce((sum, chunk) => sum + chunk.frames, 0) / stream.reader.info.fps;
+    if (stream) return stream.reader.info ? stream.offset + stream.chunks.reduce((sum, chunk) => sum + chunk.frames, 0) / stream.reader.info.fps : stream.offset;
     const ranges = this.media.buffered;
     return ranges.length > 0 ? ranges.end(ranges.length - 1) : 0;
   }

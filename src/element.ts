@@ -42,7 +42,7 @@ const GRIDS = [80, 120, 160, 200, 240, 320];
 
 const STYLE = `
 :host { display: block; position: relative; --accent: #f0a04b; --ink: #f4f6f8; --panel: rgba(12, 15, 20, 0.86); color-scheme: dark; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-.player { position: relative; width: 100%; aspect-ratio: var(--ratio, 16 / 9); background: #000; border-radius: var(--radius, 12px); overflow: hidden; outline: none; user-select: none; color: var(--ink); }
+.player { position: relative; container-type: inline-size; width: 100%; aspect-ratio: var(--ratio, 16 / 9); background: #000; border-radius: var(--radius, 12px); overflow: hidden; outline: none; user-select: none; color: var(--ink); }
 :host(:fullscreen) .player, .player.pip { border-radius: 0; height: 100%; aspect-ratio: auto; }
 canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 button { all: unset; cursor: pointer; display: grid; place-items: center; border-radius: 8px; color: inherit; }
@@ -96,7 +96,17 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 [aria-checked="true"] .switch::after { transform: translateX(14px); }
 .badge { position: absolute; top: 12px; left: 12px; padding: 3px 8px; border-radius: 6px; background: var(--panel); font: 11px ui-monospace, Consolas, monospace; opacity: 0.85; }
 .idle .badge { opacity: 0; }
-@media (max-width: 520px) { .back, .forward, .volume input { display: none; } .time { margin: 0 4px; font-size: 12px; } }
+@container (max-width: 520px) {
+  .back, .forward, .volume input { display: none; }
+  .time { margin: 0 4px; font-size: 12px; }
+  .big { width: 56px; height: 56px; }
+  .big svg { width: 26px; height: 26px; margin-left: 3px; }
+  .controls { padding: 24px 6px 4px; }
+  .row { margin-top: 0; }
+  .row button { width: 36px; height: 36px; }
+  svg { width: 20px; height: 20px; }
+  .menu { left: 6px; right: 6px; top: 6px; bottom: 50px; min-width: 0; max-height: none; }
+}
 `;
 
 const icon = (path: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
@@ -176,6 +186,7 @@ export class GlyphPlayerElement extends HTMLElement {
     this.$ = find;
     this.player = new GlyphPlayer(find('canvas') as HTMLCanvasElement, this.look());
     this.wire();
+    new ResizeObserver(() => this.fit()).observe(this.frame);
   }
 
   private look(): LookOptions {
@@ -276,8 +287,12 @@ export class GlyphPlayerElement extends HTMLElement {
 
   private updateRatio(): void {
     const { cols, rows } = this.player.grid();
-    const { width, height } = this.player.renderer.size(cols, rows);
-    this.frame.style.setProperty('--ratio', `${width} / ${height}`);
+    this.frame.style.setProperty('--ratio', `${cols * 0.6} / ${rows}`);
+    this.fit();
+  }
+
+  private fit(): void {
+    if (this.frame.clientHeight > 0) this.player.fit(this.frame.clientHeight * devicePixelRatio);
   }
 
   togglePlay(): void {

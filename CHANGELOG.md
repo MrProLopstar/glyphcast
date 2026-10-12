@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Sound inside `.gcast`: `Encoder.addAudio()`, `--embed` and `embedAudio` store Opus before the frames; the player uses it as the clock
+- Playground converter: turns a video into `.gcast` in the browser and shows the savings
+- Encoder is about six times faster, live streams keep up at 24 fps
+- Glyph size follows the displayed size, so laptops get crisp glyphs instead of shimmering downscaled ones
+- Streams no longer stall before the first chunk when audio loads first; compact controls and page on phones
+
 ## 0.3.6
 
 - Cleaner settings icon

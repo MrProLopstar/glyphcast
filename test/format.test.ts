@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeChunk, Encoder, GlyphcastError, readHeader, StreamReader, type Chunk } from '../src/format.js';
+import { audioType, decodeChunk, Encoder, GlyphcastError, readHeader, StreamReader, type Chunk } from '../src/format.js';
 import { captionAt, parseCaptions } from '../src/captions.js';
 import { autoLevels, glyphIndex, luma, NEUTRAL } from '../src/levels.js';
 
@@ -146,5 +146,20 @@ describe('captions', () => {
     const srt = parseCaptions('1\r\n00:00:03,200 --> 00:00:04,000\r\nПривет\r\n');
     expect(captionAt(srt, 3.5)).toBe('Привет');
     expect(captionAt(srt, 4)).toBeNull();
+  });
+});
+
+describe('embedded audio', () => {
+  it('stores audio before the frames and tells its type', async () => {
+    const encoder = new Encoder({ cols, rows, fps: 10, chunkFrames: 2 });
+    const sound = new Uint8Array(70000).fill(7);
+    sound.set([0x4f, 0x67, 0x67, 0x53]);
+    encoder.addAudio(sound);
+    encoder.add(frame(0));
+    expect(() => encoder.addAudio(sound)).toThrow(GlyphcastError);
+    const chunks = split(await encoder.finish());
+    expect(chunks.map((chunk) => chunk.frames)).toEqual([0, 0, 1]);
+    expect(chunks.slice(0, 2).reduce((sum, chunk) => sum + chunk.data.length, 0)).toBe(70000);
+    expect(audioType(chunks[0]?.data ?? new Uint8Array())).toBe('audio/ogg');
   });
 });

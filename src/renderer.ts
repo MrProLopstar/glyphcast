@@ -155,8 +155,8 @@ const compile = (gl: WebGL2RenderingContext, type: number, source: string): WebG
 export class GlyphRenderer {
   glyphs: string;
   private readonly font: string;
-  readonly cellWidth: number;
-  readonly cellHeight: number;
+  cellWidth: number;
+  cellHeight: number;
   private readonly gl: WebGL2RenderingContext;
   private readonly cellsTexture: WebGLTexture;
   private readonly uniforms: Readonly<Record<string, WebGLUniformLocation | null>>;
@@ -269,6 +269,16 @@ export class GlyphRenderer {
     });
     gl.activeTexture(gl.TEXTURE2);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer);
+  }
+
+  /** Changes the glyph height in device pixels; the next frame is drawn at the new size. */
+  setGlyphSize(size: number): void {
+    const height = Math.max(4, Math.round(size));
+    if (height === this.cellHeight) return;
+    this.cellHeight = height;
+    this.cellWidth = Math.max(2, Math.round(height * 0.6));
+    this.setGlyphs(this.glyphs);
+    this.cols = 0;
   }
 
   /** Sets the background color, CSS hex. */

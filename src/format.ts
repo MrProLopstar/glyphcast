@@ -24,8 +24,9 @@ export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshol
 export interface Chunk {
   /** Index of the first frame in the chunk. */
   readonly start: number;
+  /** Frames in the chunk; 0 marks a piece of embedded audio, stored before the first frame. */
   readonly frames: number;
-  /** Compressed payload, without the 6-byte chunk head. */
+  /** Compressed payload, or raw audio bytes, without the 6-byte chunk head. */
   readonly data: Uint8Array;
 }
 
@@ -123,6 +124,34 @@ const steps = (threshold: number): Steps => {
 };
 
 const rebuild = (base: number, level: number, step: number, plane: Plane): number => Math.min(plane === 'y' ? 63 : 31, Math.max(0, base + level * step));
+
+const scan = (target: Uint8Array, source: Uint8Array, width: number, height: number, x0: number, y0: number, x1: number, y1: number, dx: number, dy: number, tolerance: number, state: { cost: number; fits: boolean }, limit: number): boolean => {
+  for (let row = y0; row < y1; row += 1) {
+    const from = clampTo(row + dy, height) * width;
+    const to = row * width;
+    for (let col = x0; col < x1; col += 1) {
+      const delta = Math.abs((target[to + col] ?? 0) - (source[from + clampTo(col + dx, width)] ?? 0));
+      state.cost += delta;
+      if (delta > tolerance) state.fits = false;
+    }
+    if (!state.fits && state.cost >= limit) return false;
+  }
+  return true;
+};
+
+const match = (shape: Layout, current: Planes, reference: Planes, block: number, dx: number, dy: number, tolerance: Readonly<Record<Plane, number>>, limit: number): number => {
+  const bx = (block % shape.blocksX) * BLOCK_W;
+  const by = Math.floor(block / shape.blocksX) * BLOCK_H;
+  const state = { cost: 0, fits: true };
+  const x1 = Math.min(bx + BLOCK_W, shape.cols);
+  const y1 = Math.min(by + BLOCK_H, shape.rows);
+  if (!scan(current.y, reference.y, shape.cols, shape.rows, bx, by, x1, y1, dx, dy, tolerance.y, state, limit)) return Infinity;
+  const hx1 = Math.min((bx + BLOCK_W) >> 1, shape.halfCols);
+  const hy1 = Math.min((by + BLOCK_H) >> 1, shape.halfRows);
+  if (!scan(current.u, reference.u, shape.halfCols, shape.halfRows, bx >> 1, by >> 1, hx1, hy1, dx >> 1, dy >> 1, tolerance.u, state, limit)) return Infinity;
+  if (!scan(current.v, reference.v, shape.halfCols, shape.halfRows, bx >> 1, by >> 1, hx1, hy1, dx >> 1, dy >> 1, tolerance.v, state, limit)) return Infinity;
+  return state.fits ? -1 : state.cost;
+};
 
 const visit = (shape: Layout, block: number, each: (plane: 'y' | 'u' | 'v', index: number, reference: (dx: number, dy: number) => number) => void): void => {
   const bx = (block % shape.blocksX) * BLOCK_W;
@@ -276,6 +305,15 @@ export class Encoder {
     this.onChunk?.(bytes);
   }
 
+  /**
+   * Embeds an audio file (Ogg or WebM Opus, M4A, MP3) before the first frame. Players read it first and use it as
+   * the clock, so a single `.gcast` carries picture and sound.
+   */
+  addAudio(bytes: Uint8Array): void {
+    if (this.frames > 0 || this.inChunk > 0) throw new GlyphcastError('Audio must be added before the first frame');
+    for (let at = 0; at < bytes.length; at += 65536) this.emit(frameChunk({ start: 0, frames: 0, data: bytes.subarray(at, at + 65536) }));
+  }
+
   /** Adds a frame of `cols × rows` pixels, 3 or 4 bytes per pixel. */
   add(pixels: Uint8Array | Uint8ClampedArray): void {
     const shape = this.shape;
@@ -296,14 +334,8 @@ export class Encoder {
       let bestCost = Infinity;
       for (let vector = 0; vector < (key ? 1 : VECTORS.length); vector += 1) {
         const [dx, dy] = VECTORS[vector] ?? [0, 0];
-        let cost = 0;
-        let fits = true;
-        visit(shape, block, (plane, index, at) => {
-          const delta = Math.abs((current[plane][index] ?? 0) - (reference[plane][at(dx, dy)] ?? 0));
-          cost += delta;
-          if (delta > tolerance[plane]) fits = false;
-        });
-        if (fits) {
+        const cost = match(shape, current, reference, block, dx, dy, tolerance, bestCost);
+        if (cost < 0) {
           chosen = vector;
           break;
         }
@@ -371,6 +403,15 @@ export class Encoder {
     return out;
   }
 }
+
+/** MIME type of embedded audio bytes, from their signature. */
+export const audioType = (bytes: Uint8Array): string => {
+  const ascii = String.fromCharCode(...bytes.subarray(0, 12));
+  if (ascii.startsWith('OggS')) return 'audio/ogg';
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return 'audio/webm';
+  if (ascii.slice(4, 8) === 'ftyp') return 'audio/mp4';
+  return 'audio/mpeg';
+};
 
 /** Decodes one chunk payload into RGBA frames (`cols × rows × 4` bytes each), ready to upload as a texture. */
 export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold'>, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => {

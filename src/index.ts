@@ -19,7 +19,7 @@
  *
  * @module
  */
-export { decodeChunk, Encoder, frameChunk, GlyphcastError, readHeader, StreamReader, writeHeader, type Chunk, type EncodeOptions, type StreamInfo } from './format.js';
+export { audioType, decodeChunk, Encoder, frameChunk, GlyphcastError, readHeader, StreamReader, writeHeader, type Chunk, type EncodeOptions, type StreamInfo } from './format.js';
 export { autoLevels, glyphIndex, luma, type Levels } from './levels.js';
 export { captionAt, parseCaptions, type Cue } from './captions.js';
 export { DEFAULT_GLYPHS, GlyphRenderer, type FrameStyle, type RenderMode, type RendererOptions } from './renderer.js';

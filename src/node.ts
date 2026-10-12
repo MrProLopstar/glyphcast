@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Encoder, GlyphcastError } from './format.js';
 
 export interface EncodeVideoOptions {
@@ -16,6 +19,8 @@ export interface EncodeVideoOptions {
   readonly ffmpeg?: string;
   /** Path to ffprobe. Default `ffprobe` from PATH. */
   readonly ffprobe?: string;
+  /** Embed the sound as Opus inside the stream (`encodeVideo` only). Default false. */
+  readonly embedAudio?: boolean;
 }
 
 const run = (command: string, args: readonly string[], onData?: (chunk: Buffer) => void): Promise<string> =>
@@ -48,6 +53,15 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const { width, height } = await probe(input, options.ffprobe);
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
+  if (options.embedAudio) {
+    const temp = mkdtempSync(join(tmpdir(), 'glyphcast-'));
+    try {
+      await extractAudio(input, join(temp, 'audio.opus'), options.ffmpeg ? { ffmpeg: options.ffmpeg } : {});
+      encoder.addAudio(readFileSync(join(temp, 'audio.opus')));
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  }
   const frameSize = cols * rows * 3;
   let pending: Buffer = Buffer.alloc(0);
   await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-i', input, '-an', '-vf', `fps=${fps},scale=${cols}:${rows}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], (chunk) => {

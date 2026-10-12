@@ -9,7 +9,8 @@ import { playInTerminal } from './terminal.js';
 
 const USAGE = `glyphcast: video as glyphs
 
-  glyphcast encode <video> [--out file.gcast] [--cols 160] [--fps 24] [--threshold 3] [--audio file.opus] [--chunk 2]
+  glyphcast encode <video> [--out file.gcast] [--cols 160] [--fps 24] [--threshold 3] [--embed | --audio file.m4a] [--chunk 2]
+      --embed puts Opus sound inside the .gcast, --audio writes it to a separate file
   glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
   glyphcast play <file.gcast | stream URL | video> [--cols width]
       plays in the terminal with 24-bit color glyphs
@@ -30,6 +31,7 @@ const main = async (): Promise<void> => {
       fps: { type: 'string' },
       chunk: { type: 'string' },
       threshold: { type: 'string' },
+      embed: { type: 'boolean' },
       audio: { type: 'string' },
       port: { type: 'string' },
       dir: { type: 'string' },
@@ -61,7 +63,8 @@ const main = async (): Promise<void> => {
     const info = reader.info;
     if (!info) throw new Error('Not a .gcast file');
     const frames = chunks.reduce((sum, chunk) => sum + chunk.frames, 0);
-    console.log(`${info.cols}×${info.rows} glyphs, ${info.fps} fps, ${frames} frames (${(frames / info.fps).toFixed(1)} s), ${chunks.length} chunks, ${kb(statSync(input).size)}`);
+    const sound = chunks.filter((chunk) => chunk.frames === 0).reduce((sum, chunk) => sum + chunk.data.length, 0);
+    console.log(`${info.cols}×${info.rows} glyphs, ${info.fps} fps, ${frames} frames (${(frames / info.fps).toFixed(1)} s), ${chunks.length} chunks, ${kb(statSync(input).size)}${sound ? `, audio ${kb(sound)} inside` : ''}`);
     return;
   }
   if (command === 'micro') {
@@ -78,6 +81,7 @@ const main = async (): Promise<void> => {
     ...(values.fps ? { fps: Number(values.fps) } : {}),
     ...(values.chunk ? { chunkSeconds: Number(values.chunk) } : {}),
     ...(values.threshold ? { threshold: Number(values.threshold) } : {}),
+    ...(values.embed ? { embedAudio: true } : {}),
   });
   writeFileSync(out, bytes);
   const reader = new StreamReader();
