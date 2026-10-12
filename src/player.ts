@@ -94,6 +94,7 @@ export class GlyphPlayer extends EventTarget {
   private rate = 1;
   private ended = false;
   private mediaClock = false;
+  private stalled = false;
   private cues: readonly Cue[] = [];
   private caption: string | null = null;
 
@@ -216,6 +217,7 @@ export class GlyphPlayer extends EventTarget {
     const urls = offset > 0 && source.restart ? source.restart(offset) : { src: source.src, ...(source.audio ? { audio: source.audio } : {}) };
     const state: StreamState = { source, reader: new StreamReader(), chunks: [], decoded: new Map(), abort: new AbortController(), offset, done: false, clockStart: 0, clockAt: 0 };
     this.stream = state;
+    this.stalled = false;
     this.shownFrame = -1;
     this.mediaClock = Boolean(urls.audio);
     if (urls.audio) {
@@ -258,6 +260,7 @@ export class GlyphPlayer extends EventTarget {
 
   private unload(): void {
     this.pauseLoop();
+    this.stalled = false;
     this.mediaClock = false;
     if (this.stream) this.stream.abort.abort();
     this.stream = null;
@@ -286,7 +289,7 @@ export class GlyphPlayer extends EventTarget {
 
   get paused(): boolean {
     if (this.stream && !this.hasAudio) return this.loop === null;
-    return this.media.paused;
+    return this.media.paused && !this.stalled;
   }
 
   get duration(): number {
@@ -378,6 +381,7 @@ export class GlyphPlayer extends EventTarget {
       this.emit('pause');
       return;
     }
+    this.stalled = false;
     this.media.pause();
     this.pauseLoop();
     this.draw();
@@ -425,6 +429,7 @@ export class GlyphPlayer extends EventTarget {
         this.emit('timeupdate');
       }
       const stream = this.stream;
+      if (stream && this.hasAudio) this.buffer(stream);
       if (stream?.done && stream.reader.info && this.currentTime >= this.duration - 0.02) {
         if (this.hasAudio) this.media.pause();
         this.finish();
@@ -433,6 +438,19 @@ export class GlyphPlayer extends EventTarget {
       if (this.loop !== null) this.loop = requestAnimationFrame(tick);
     };
     this.loop = requestAnimationFrame(tick);
+  }
+
+  private buffer(stream: StreamState): void {
+    const ahead = this.bufferedEnd - this.currentTime;
+    if (!this.stalled && !stream.done && ahead < 0.3) {
+      this.stalled = true;
+      this.media.pause();
+      this.emit('waiting');
+    } else if (this.stalled && (stream.done || ahead > 2)) {
+      this.stalled = false;
+      void this.media.play().catch(() => undefined);
+      this.emit('playing');
+    }
   }
 
   private pauseLoop(): void {

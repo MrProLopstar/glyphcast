@@ -15,7 +15,7 @@ npm install glyphcast
 <script type="module">import 'glyphcast/element';</script>
 
 <glyph-player src="movie.mp4" cols="160"></glyph-player>
-<glyph-player src="movie.gcast" audio="movie.opus" subtitles="movie.vtt"></glyph-player>
+<glyph-player src="movie.gcast" audio="movie.m4a" subtitles="movie.vtt"></glyph-player>
 <glyph-player youtube="https://youtu.be/…" server="http://127.0.0.1:8787"></glyph-player>
 ```
 
@@ -49,7 +49,7 @@ Without UI, `GlyphPlayer` is the same engine with the media element API: `load`,
 At 160 columns a frame is about nine thousand colored cells, far less than a video frame. `.gcast` stores 6-bit brightness per cell and one color per 2×2 cells, like 4:2:0 video. The grid is cut into 8×4 blocks: a block either repeats the previous frame shifted by a motion vector or carries a residual against it, quantized to the threshold. One- or two-second chunks are deflated and start with an exact key frame. The format streams: chunks are length-prefixed, so a player starts with the first one, and a server can produce them live.
 
 ```sh
-npx glyphcast encode movie.mp4 --cols 180 --audio movie.opus   # file + audio
+npx glyphcast encode movie.mp4 --cols 180 --audio movie.m4a   # file + audio
 npx glyphcast play movie.gcast                                  # in the terminal
 npx glyphcast serve --dir ./videos                              # live streams
 npx glyphcast micro movie.mp4 --cols 180                        # tiny H.264 at grid size

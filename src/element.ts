@@ -279,7 +279,11 @@ export class GlyphPlayerElement extends HTMLElement {
   }
 
   togglePlay(): void {
-    if (this.player.paused) void this.player.play().catch((error: unknown) => this.message(error instanceof Error ? error.message : String(error)));
+    if (this.player.paused) {
+      void this.player.play().catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) this.message(error instanceof Error ? error.message : String(error));
+      });
+    }
     else this.player.pause();
   }
 

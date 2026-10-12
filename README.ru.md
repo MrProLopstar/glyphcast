@@ -15,7 +15,7 @@ npm install glyphcast
 <script type="module">import 'glyphcast/element';</script>
 
 <glyph-player src="movie.mp4" cols="160"></glyph-player>
-<glyph-player src="movie.gcast" audio="movie.opus" subtitles="movie.vtt"></glyph-player>
+<glyph-player src="movie.gcast" audio="movie.m4a" subtitles="movie.vtt"></glyph-player>
 <glyph-player youtube="https://youtu.be/…" server="http://127.0.0.1:8787"></glyph-player>
 ```
 
@@ -49,7 +49,7 @@ npm install glyphcast
 При 160 колонках кадр состоит примерно из девяти тысяч цветных клеток, это намного меньше кадра видео. `.gcast` хранит у каждой клетки яркость (6 бит), а цвет один на квадрат 2×2 клетки, как 4:2:0 в видео. Сетка нарезана на блоки 8×4: блок либо повторяет прошлый кадр со сдвигом (вектор движения), либо несёт остаток к нему, огрублённый до порога. Куски по одной-две секунды сжимаются deflate и начинаются с точного опорного кадра. Формат потоковый: у кусков есть длина, поэтому плеер начинает с первого же куска, а сервер может выдавать их на лету.
 
 ```sh
-npx glyphcast encode movie.mp4 --cols 180 --audio movie.opus   # файл и звук
+npx glyphcast encode movie.mp4 --cols 180 --audio movie.m4a   # файл и звук
 npx glyphcast play movie.gcast                                  # в терминале
 npx glyphcast serve --dir ./videos                              # живые потоки
 npx glyphcast micro movie.mp4 --cols 180                        # крошечное H.264 размером с сетку

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4
+
+- Streams with audio pause the sound and show buffering when frames run out, instead of playing sound over a frozen picture
+- An interrupted `play()` no longer shows an error
+- `extractAudio` and `--audio` write AAC for `.m4a`, which plays on every phone; `.opus` stays Opus
+
 ## 0.3.3
 
 - The settings menu sits above the controls, so its last switch can be clicked
