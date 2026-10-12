@@ -102,7 +102,7 @@ export const extractPoster = async (input: string, output: string, options: { re
 
 /** Extracts the audio track for a stream: AAC for `.m4a`, which every browser plays, or Opus for `.opus` and `.ogg`. */
 export const extractAudio = (input: string, output: string, options: { readonly bitrate?: string; readonly ffmpeg?: string } = {}): Promise<string> =>
-  run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', '-i', input, '-vn', ...(/\.(m4a|aac|mp4)$/i.test(output) ? ['-c:a', 'aac', '-movflags', '+faststart'] : ['-c:a', 'libopus']), '-b:a', options.bitrate ?? '64k', output]);
+  run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', '-i', input, '-vn', ...(/\.(m4a|aac|mp4)$/i.test(output) ? ['-c:a', 'aac', '-movflags', '+faststart'] : ['-c:a', 'libopus']), '-ac', '2', '-b:a', options.bitrate ?? '64k', output]);
 
 export { decodeChunk, Encoder, GlyphcastError, readHeader, StreamReader } from './format.js';
 export { serve, type ServeOptions, type VideoInfo } from './serve.js';
