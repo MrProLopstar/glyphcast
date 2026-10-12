@@ -28,7 +28,7 @@ const GRIDS = [80, 120, 160, 200, 240, 320];
 const STYLE = `
 :host { display: block; position: relative; --accent: #f0a04b; --ink: #f4f6f8; --panel: rgba(12, 15, 20, 0.86); color-scheme: dark; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .player { position: relative; container-type: inline-size; width: 100%; aspect-ratio: var(--ratio, 16 / 9); background: #000; border-radius: var(--radius, 12px); overflow: hidden; outline: none; user-select: none; color: var(--ink); }
-:host(:fullscreen) .player, .player.pip { border-radius: 0; height: 100%; aspect-ratio: auto; }
+:host(:fullscreen) .player, .player.pip, :host([fullsize]) .player { border-radius: 0; height: 100%; aspect-ratio: auto; }
 canvas, .poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .poster { pointer-events: none; transition: opacity 0.3s; }
 .poster.gone { opacity: 0; }
@@ -121,7 +121,7 @@ type DocumentPip = { requestWindow: (options: { width: number; height: number })
  *
  * Attributes: `src`, `poster` (image shown until the first frame), `audio`, `youtube`, `file` (a video in the server folder), `server`, `subtitles` (WebVTT or SRT URL),
  * `cols`, `glyphs`, `tint`, `boost`, `autolevels`, `mode` (`glyphs`, `braille`, `halftone`), `edges`, `crt`, `autoplay`,
- * `muted`, `loop`. The `player` property gives the underlying `GlyphPlayer`.
+ * `muted`, `loop`, `fullsize` (fill the element's own size, for embeds). The `player` property gives the underlying `GlyphPlayer`.
  */
 export class GlyphPlayerElement extends HTMLElement {
   static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'poster', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt', 'sharp', 'smooth'];

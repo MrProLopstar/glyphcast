@@ -14,12 +14,12 @@ const USAGE = `glyphcast: video as glyphs
       --poster saves a frame as <name>.jpg for the player; several videos are encoded one by one;
       black bars that stay black through the whole video are cut, --no-crop keeps them
   glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
-  glyphcast play <file.gcast | stream URL | video> [--cols width]
+  glyphcast play <file.gcast | stream URL | video | hub:name> [--cols width] [--subtitles file.vtt]
       plays in the terminal; for .gcast: Space pause, ←/→ 5 s, J/L 10 s, 0-9 jump, M render mode, G glyphs,
       C colors, [ ] saturation, B background, Q quit; sound via ffplay
   glyphcast hub [search]
       lists open videos in the gcast hub; play them with glyphcast play hub:<name>
-  glyphcast publish <file.gcast> --title "Name" [--license CC-BY] [--image poster.jpg]
+  glyphcast publish <file.gcast> --title "Name" [--license CC-BY] [--image poster.jpg] [--subtitles file.vtt]
       uploads to the gcast hub with the key from GLYPHCAST_HUB_KEY; licenses: CC0, CC-BY, CC-BY-SA,
       CC-BY-NC, public-domain list the video, own keeps it reachable by link only
   glyphcast info <file.gcast>
@@ -45,6 +45,7 @@ const main = async (): Promise<void> => {
       title: { type: 'string' },
       license: { type: 'string' },
       image: { type: 'string' },
+      subtitles: { type: 'string' },
       audio: { type: 'string' },
       port: { type: 'string' },
       dir: { type: 'string' },
@@ -76,6 +77,7 @@ const main = async (): Promise<void> => {
     };
     const entry = await send(`${files}/upload?${query}`, input, 'application/octet-stream');
     if (values.image) await send(`${files}/poster/${String(entry['id'])}`, values.image, 'image/jpeg');
+    if (values.subtitles) await send(`${files}/subtitles/${String(entry['id'])}`, values.subtitles, 'text/vtt');
     console.log(`${String(entry['title'])}: hub:${String(entry['listed'] ? entry['slug'] : entry['id'])}`);
     return;
   }
@@ -102,10 +104,11 @@ glyphcast play hub:<name>   files from ${files}`);
       const id = video?.id ?? name;
       if (!/^[\w-]{11}$/.test(id)) throw new Error(`No video "${name}" in the hub; see glyphcast hub`);
       if (video) console.log(video.title);
-      await playInTerminal(`${files}/v/${id}.gcast`, { title: video?.title ?? `hub:${name}`, ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
+      const subtitles = video?.subtitles ? await fetch(`${files}/v/${id}.vtt`).then((response) => (response.ok ? response.text() : undefined)).catch(() => undefined) : undefined;
+      await playInTerminal(`${files}/v/${id}.gcast`, { title: video?.title ?? `hub:${name}`, ...(subtitles ? { subtitles } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
       return;
     }
-    await playInTerminal(input, { ...(values.cols ? { cols: Number(values.cols) } : {}), ...(values.fps ? { fps: Number(values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
+    await playInTerminal(input, { ...(values.subtitles ? { subtitles: readFileSync(values.subtitles, 'utf8') } : {}), ...(values.cols ? { cols: Number(values.cols) } : {}), ...(values.fps ? { fps: Number(values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
     return;
   }
   if (command === 'info') {
@@ -136,6 +139,7 @@ interface HubVideo {
   readonly license: string;
   readonly listed: boolean;
   readonly duration: number;
+  readonly subtitles?: boolean;
 }
 
 const hub = async (): Promise<{ readonly files: string; readonly videos: HubVideo[] }> => {

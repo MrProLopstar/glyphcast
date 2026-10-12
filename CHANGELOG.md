@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0
+
+- Terminal subtitles: `glyphcast play --subtitles file.vtt`, and hub videos with subtitles show them
+- `glyphcast publish --subtitles` uploads WebVTT or SRT with a hub video
+- `fullsize` attribute makes the player fill its element, for embeds
+
 ## 0.10.0
 
 - Encoding cuts black bars that stay black through the whole video (checked on every key frame), so letterboxed films fill the grid while videos that switch formats keep their full frame; `--no-crop` and `crop: false` turn it off. `detectBars()` is exported

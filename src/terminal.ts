@@ -4,6 +4,7 @@ import { decodeChunkMotion, GlyphcastError, interpolate, type DecodedChunk, HEAD
 import { autoLevels, ease, luma, NEUTRAL, SHADOWS, type Levels } from './levels.js';
 import { probe } from './node.js';
 import { GLYPH_SETS, TINTS } from './looks.js';
+import { captionAt, parseCaptions } from './captions.js';
 import { DEFAULT_GLYPHS } from './renderer.js';
 import { upscale2x } from './upscale.js';
 
@@ -30,6 +31,8 @@ export interface TerminalOptions {
   readonly ffplay?: string;
   /** Name shown while loading. Default the input. */
   readonly title?: string;
+  /** WebVTT or SRT text, shown over the bottom of the picture. */
+  readonly subtitles?: string;
 }
 
 const channel = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
@@ -445,6 +448,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   };
   let previous: Uint8ClampedArray | null = null;
   let redraw = true;
+  const cues = options.subtitles ? parseCaptions(options.subtitles) : [];
+  let caption: string | null = null;
   const input$ = process.stdin;
   let base = 0;
   let startedAt = performance.now();
@@ -552,6 +557,11 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       const half = look.smooth && time * info.fps - index >= 0.5 ? 1 : 0;
       const phase = index * 2 + half;
       const piece = library.pieces.find((item) => index >= item.start && index < item.start + item.frames);
+      const line$ = captionAt(cues, time)?.replace(/\s*\n\s*/g, ' ') ?? null;
+      if (line$ !== caption) {
+        caption = line$;
+        redraw = true;
+      }
       if (piece && (phase !== shown || redraw)) {
         const decoded = await frames(piece).catch(() => null);
         const next = library.pieces.find((item) => item.start === piece.start + piece.frames);
@@ -590,6 +600,10 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
             cellRatio,
           });
           if (!output.write(text.split('\n').map((line, row) => `\x1b[${top + row + 1};${left + 1}H${line}`).join(''))) await new Promise((resolve) => output.once('drain', resolve));
+          if (caption) {
+            const words = caption.slice(0, Math.max(10, fitted.width - 4));
+            output.write(`\x1b[${top + fitted.height - 1};${left + 1 + Math.max(0, Math.floor((fitted.width - words.length - 2) / 2))}H\x1b[48;2;0;0;0m\x1b[38;2;255;246;200m ${words} \x1b[0m`);
+          }
           shown = phase;
           redraw = false;
         }
