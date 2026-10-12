@@ -5,9 +5,9 @@
 
 [English version](README.md) · [Песочница](https://mrprolopstar.github.io/glyphcast/) · [Хаб](https://mrprolopstar.github.io/gcast-hub/)
 
-![Big Buck Bunny в режиме Брайля](https://mrprolopstar.github.io/glyphcast/preview.jpg)
+![Опенинг One Piece в режиме Брайля](https://mrprolopstar.github.io/glyphcast/preview.jpg)
 
-<sub>Big Buck Bunny © Blender Foundation, CC BY 3.0, в режиме Брайля, 180 колонок.</sub>
+<sub>Опенинг One Piece в режиме Брайля, 180 колонок.</sub>
 
 Видео цветными символами. Полноценный плеер для браузера: управление, настройки, субтитры, горячие клавиши, картинка в картинке и полный экран, а каждый кадр перерисовывается символами шейдером WebGL2. Сервер может присылать вместо видео сами символьные кадры, и браузер получает компактный поток `.gcast`, а не исходное видео. Тот же поток играет и в терминале.
 

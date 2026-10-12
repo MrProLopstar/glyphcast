@@ -5,9 +5,9 @@
 
 [Русская версия](README.ru.md) · [Playground](https://mrprolopstar.github.io/glyphcast/) · [Hub](https://mrprolopstar.github.io/gcast-hub/)
 
-![Big Buck Bunny in braille mode](https://mrprolopstar.github.io/glyphcast/preview.jpg)
+![One Piece opening in braille mode](https://mrprolopstar.github.io/glyphcast/preview.jpg)
 
-<sub>Big Buck Bunny © Blender Foundation, CC BY 3.0, in braille mode, 180 columns.</sub>
+<sub>One Piece opening in braille mode, 180 columns.</sub>
 
 Video as colored glyphs. A complete player for the browser: controls, settings, subtitles, keyboard shortcuts, picture-in-picture and fullscreen, with every frame redrawn as characters by a WebGL2 shader. A server can also send glyph frames instead of video, so the browser receives a compact `.gcast` stream rather than the footage itself. The same stream plays in a terminal too.
 
