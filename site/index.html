@@ -69,7 +69,7 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
     </form>
   </section>
 
-  <glyph-player id="player" src="./sample.gcast" subtitles="./sample.vtt" cols="160"></glyph-player>
+  <glyph-player id="player" src="./onepiece.gcast" audio="./onepiece.opus" cols="160"></glyph-player>
 
   <p class="hint" id="hint">YouTube идёт через локальный сервер: браузер не даёт читать кадры чужих видео. Запустите <code>npx glyphcast serve</code> (нужны ffmpeg и yt-dlp), и сервер будет присылать сразу символьный поток со звуком.</p>
 
@@ -105,8 +105,8 @@ $('file').addEventListener('change', async (event) => {
 
 $('sample').addEventListener('click', () => {
   clearSource();
-  player.setAttribute('src', './sample.gcast');
-  player.setAttribute('subtitles', './sample.vtt');
+  player.setAttribute('audio', './onepiece.opus');
+  player.setAttribute('src', './onepiece.gcast');
 });
 
 $('camera').addEventListener('click', async () => {
