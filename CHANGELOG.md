@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.8
+
+- Terminal player survives dropped connections: range requests retry three times, a chunk that still fails is fetched again when needed
+
 ## 0.5.7
 
 - Terminal player: an odd spare column goes to the left, balancing the scrollbar on the right

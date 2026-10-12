@@ -283,9 +283,16 @@ const fromRanges = async (url: string): Promise<Library | null> => {
   await probe.arrayBuffer();
   const read = async (offset: number, length: number): Promise<Uint8Array> => {
     if (length <= 0) return new Uint8Array(0);
-    const response = await fetch(url, { headers: { range: `bytes=${offset}-${offset + length - 1}` } });
-    if (response.status !== 206) throw new GlyphcastError(`Cannot read ${url}: HTTP ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const response = await fetch(url, { headers: { range: `bytes=${offset}-${offset + length - 1}` } });
+        if (response.status !== 206) throw new GlyphcastError(`Cannot read ${url}: HTTP ${response.status}`);
+        return new Uint8Array(await response.arrayBuffer());
+      } catch (error) {
+        if (attempt >= 3) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+      }
+    }
   };
   return indexed(read, size, () => undefined);
 };
@@ -325,7 +332,7 @@ const fromUrl = async (url: string): Promise<Library> => {
       for (const chunk of reader.push(part.value)) if (chunk.frames > 0) library.pieces.push({ start: chunk.start, frames: chunk.frames, load: () => Promise.resolve(chunk.data) });
     }
     done = true;
-  })();
+  })().catch(() => (done = true));
   return library;
 };
 
@@ -471,6 +478,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     let pending = cache.get(piece.start);
     if (!pending) {
       pending = piece.load().then((data) => decodeChunk(info, data));
+      const key = piece.start;
+      pending.catch(() => cache.delete(key));
       cache.set(piece.start, pending);
       for (const key of cache.keys()) if (Math.abs(key - piece.start) > info.chunkFrames * 2) cache.delete(key);
     }
@@ -537,9 +546,9 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       const index = Math.min(Math.floor(time * info.fps), Math.max(0, Math.round(total() * info.fps) - 1));
       const piece = library.pieces.find((item) => index >= item.start && index < item.start + item.frames);
       if (piece && (index !== shown || redraw)) {
-        const frame = (await frames(piece))[index - piece.start];
+        const frame = (await frames(piece).catch(() => []))[index - piece.start];
         const next = library.pieces.find((item) => item.start === piece.start + piece.frames);
-        if (next) void frames(next);
+        if (next) void frames(next).catch(() => undefined);
         if (frame) {
           if (index !== shown) previous = steady(previous, frame);
           levels = ease(levels, autoLevels(previous ?? frame));
