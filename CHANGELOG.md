@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.0
+
+- Encoding cuts black bars that stay black through the whole video (checked on every key frame), so letterboxed films fill the grid while videos that switch formats keep their full frame; `--no-crop` and `crop: false` turn it off. `detectBars()` is exported
+
 ## 0.9.0
 
 - Smooth playback: frames in between are drawn along the block motion already stored in `.gcast`, so a 24 fps stream plays at the display rate. On by default, `smooth="false"` or the menu turns it off; `V` toggles it in the terminal

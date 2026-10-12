@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { NEUTRAL } from '../src/levels.js';
-import { decodeChunk, encodeMicroVideo, encodeVideo, probe, readHeader, serve, StreamReader } from '../src/node.js';
+import { decodeChunk, detectBars, encodeMicroVideo, encodeVideo, probe, readHeader, serve, StreamReader } from '../src/node.js';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const dir = mkdtempSync(join(tmpdir(), 'glyphcast-'));
@@ -50,6 +50,15 @@ describe.runIf(hasFfmpeg)('ffmpeg encoders', () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe.runIf(hasFfmpeg)('black bars', () => {
+  it('cuts bars that stay black through the whole video', async () => {
+    const boxed = join(dir, 'boxed.mp4');
+    spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x136:r=25', '-t', '1', '-vf', 'pad=320:180:0:22:black', '-pix_fmt', 'yuv420p', boxed]);
+    expect(await detectBars(boxed, 320, 180)).toMatchObject({ width: 320, height: 136, x: 0 });
+    expect(readHeader(await encodeVideo(boxed, { cols: 64, fps: 5 })).rows).toBe(16);
   });
 });
 

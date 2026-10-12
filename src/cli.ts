@@ -11,7 +11,8 @@ const USAGE = `glyphcast: video as glyphs
 
   glyphcast encode <video...> [--out file.gcast] [--cols 160] [--fps 24] [--threshold 3] [--embed | --audio file.m4a] [--poster] [--chunk 2]
       --embed puts Opus sound inside the .gcast, --audio writes it to a separate file,
-      --poster saves a frame as <name>.jpg for the player; several videos are encoded one by one
+      --poster saves a frame as <name>.jpg for the player; several videos are encoded one by one;
+      black bars that stay black through the whole video are cut, --no-crop keeps them
   glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
   glyphcast play <file.gcast | stream URL | video> [--cols width]
       plays in the terminal; for .gcast: Space pause, ←/→ 5 s, J/L 10 s, 0-9 jump, M render mode, G glyphs,
@@ -39,6 +40,7 @@ const main = async (): Promise<void> => {
       chunk: { type: 'string' },
       threshold: { type: 'string' },
       embed: { type: 'boolean' },
+      'no-crop': { type: 'boolean' },
       poster: { type: 'boolean' },
       title: { type: 'string' },
       license: { type: 'string' },
@@ -150,7 +152,7 @@ const clock = (seconds: number): string => {
   return hours ? `${hours}:${rest}` : rest;
 };
 
-const encode = async (input: string, out: string, values: { readonly cols?: string; readonly fps?: string; readonly chunk?: string; readonly threshold?: string; readonly embed?: boolean; readonly poster?: boolean; readonly audio?: string }): Promise<void> => {
+const encode = async (input: string, out: string, values: { readonly cols?: string; readonly fps?: string; readonly chunk?: string; readonly threshold?: string; readonly embed?: boolean; readonly 'no-crop'?: boolean; readonly poster?: boolean; readonly audio?: string }): Promise<void> => {
   const started = performance.now();
   const live = process.stdout.isTTY;
   const bytes = await encodeVideo(input, {
@@ -165,6 +167,7 @@ const encode = async (input: string, out: string, values: { readonly cols?: stri
     ...(values.chunk ? { chunkSeconds: Number(values.chunk) } : {}),
     ...(values.threshold ? { threshold: Number(values.threshold) } : {}),
     ...(values.embed ? { embedAudio: true } : {}),
+    ...(values['no-crop'] ? { crop: false } : {}),
   });
   if (live) process.stdout.write('\r\x1b[K');
   writeFileSync(out, bytes);

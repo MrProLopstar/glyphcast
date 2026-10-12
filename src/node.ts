@@ -21,6 +21,8 @@ export interface EncodeVideoOptions {
   readonly ffprobe?: string;
   /** Embed the sound as Opus inside the stream (`encodeVideo` only). Default false. */
   readonly embedAudio?: boolean;
+  /** Cut black bars that stay black through the whole video. Default true. */
+  readonly crop?: boolean;
   /** Called as frames are encoded with the seconds done and the total, for progress output. */
   readonly onProgress?: (done: number, total: number) => void;
 }
@@ -39,6 +41,43 @@ const run = (command: string, args: readonly string[], onData?: (chunk: Buffer) 
 const hasAudio = async (input: string, ffprobe = 'ffprobe'): Promise<boolean> =>
   (await run(ffprobe, ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', input])).trim().length > 0;
 
+/**
+ * The area of a video that is not black bars in any key frame: bars are cut only where they stay black for the
+ * whole video, so a film that switches between 4:3 and widescreen keeps its full width.
+ */
+export const detectBars = (input: string, width: number, height: number, ffmpeg = 'ffmpeg'): Promise<{ readonly width: number; readonly height: number; readonly x: number; readonly y: number }> =>
+  new Promise((resolve) => {
+    const child = spawn(ffmpeg, ['-hide_banner', '-skip_frame', 'nokey', '-i', input, '-an', '-vf', 'cropdetect=limit=24:round=2:reset=1:skip=0', '-f', 'null', '-'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let left = width;
+    let top = height;
+    let right = 0;
+    let bottom = 0;
+    let found = false;
+    let pending = '';
+    child.stderr.on('data', (data: Buffer) => {
+      pending += data.toString();
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        const match = /crop=(\d+):(\d+):(\d+):(\d+)/.exec(line);
+        if (!match) continue;
+        const [w, h, x, y] = match.slice(1).map(Number) as [number, number, number, number];
+        if (w <= 0 || h <= 0) continue;
+        found = true;
+        left = Math.min(left, x);
+        top = Math.min(top, y);
+        right = Math.max(right, x + w);
+        bottom = Math.max(bottom, y + h);
+      }
+    });
+    const full = { width, height, x: 0, y: 0 };
+    child.on('error', () => resolve(full));
+    child.on('close', () => {
+      const area = { width: right - left, height: bottom - top, x: left, y: top };
+      resolve(found && area.width > 0 && area.height > 0 && area.width * area.height < width * height * 0.97 ? area : full);
+    });
+  });
+
 /** Width and height of the first video stream. */
 export const probe = async (input: string, ffprobe = 'ffprobe'): Promise<{ readonly width: number; readonly height: number; readonly duration: number }> => {
   const output = await run(ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height:format=duration', '-of', 'json', input]);
@@ -55,7 +94,11 @@ export const probe = async (input: string, ffprobe = 'ffprobe'): Promise<{ reado
 export const encodeVideo = async (input: string, options: EncodeVideoOptions = {}): Promise<Uint8Array> => {
   const cols = options.cols ?? 160;
   const fps = options.fps ?? 24;
-  const { width, height, duration } = await probe(input, options.ffprobe);
+  const probed = await probe(input, options.ffprobe);
+  const { duration } = probed;
+  const area = options.crop === false ? { width: probed.width, height: probed.height, x: 0, y: 0 } : await detectBars(input, probed.width, probed.height, options.ffmpeg);
+  const { width, height } = area;
+  const cropped = area.width !== probed.width || area.height !== probed.height ? `crop=${area.width}:${area.height}:${area.x}:${area.y},` : '';
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
   let frames = 0;
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
@@ -70,7 +113,7 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   }
   const frameSize = cols * rows * 3;
   let pending: Buffer = Buffer.alloc(0);
-  await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-i', input, '-an', '-vf', `fps=${fps},scale=${cols}:${rows}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], (chunk) => {
+  await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-i', input, '-an', '-vf', `${cropped}fps=${fps},scale=${cols}:${rows}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], (chunk) => {
     pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
     while (pending.length >= frameSize) {
       encoder.add(pending.subarray(0, frameSize));
