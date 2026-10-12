@@ -50,6 +50,7 @@ const BLOCK_W = 8;
 const BLOCK_H = 4;
 const VECTORS: readonly (readonly [number, number])[] = [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2], [-2, -2], [2, -2], [-2, 2], [2, 2], [-4, 0], [4, 0], [0, -4], [0, 4], [-6, 0], [6, 0]];
 const RESIDUAL = 128;
+const UNIFORM = 64;
 
 interface Planes {
   y: Uint8Array;
@@ -370,6 +371,31 @@ export class Encoder {
           best = vector;
         }
       }
+      if (chosen < 0) {
+        const low = { y: 255, u: 255, v: 255 };
+        const high = { y: 0, u: 0, v: 0 };
+        const sum = { y: 0, u: 0, v: 0 };
+        const cells = { y: 0, u: 0, v: 0 };
+        visit(shape, block, (plane, index) => {
+          const value = current[plane][index] ?? 0;
+          low[plane] = Math.min(low[plane], value);
+          high[plane] = Math.max(high[plane], value);
+          sum[plane] += value;
+          cells[plane] += 1;
+        });
+        if ((['y', 'u', 'v'] as const).every((plane) => high[plane] - low[plane] <= Math.max(1, tolerance[plane]))) {
+          modes[block] = UNIFORM;
+          const fill = { y: Math.round(sum.y / (cells.y || 1)), u: Math.round(sum.u / (cells.u || 1)), v: Math.round(sum.v / (cells.v || 1)) };
+          for (const plane of ['y', 'u', 'v'] as const) {
+            residuals[plane][counts[plane]] = fill[plane];
+            counts[plane] += 1;
+          }
+          visit(shape, block, (plane, index) => {
+            next[plane][index] = fill[plane];
+          });
+          continue;
+        }
+      }
       const vector = chosen >= 0 ? chosen : best;
       const [dx, dy] = VECTORS[vector] ?? [0, 0];
       modes[block] = chosen >= 0 ? vector : vector | RESIDUAL;
@@ -498,13 +524,27 @@ export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'thre
     at += 1 + shape.blocks;
     const counts = { y: 0, u: 0, v: 0 };
     modes.forEach((mode, block) => {
-      if (mode & RESIDUAL) visit(shape, block, (plane) => (counts[plane] += 1));
+      if (mode === UNIFORM) {
+        counts.y += 1;
+        counts.u += 1;
+        counts.v += 1;
+      } else if (mode & RESIDUAL) visit(shape, block, (plane) => (counts[plane] += 1));
     });
     const offsets = { y: at, u: at + counts.y, v: at + counts.y + counts.u };
     at += counts.y + counts.u + counts.v;
     if (modes.length < shape.blocks || at > raw.length) throw new GlyphcastError('Truncated frame');
     const next = planes(shape);
     modes.forEach((mode, block) => {
+      if (mode === UNIFORM) {
+        const fill = { y: raw[offsets.y] ?? 0, u: raw[offsets.u] ?? 0, v: raw[offsets.v] ?? 0 };
+        offsets.y += 1;
+        offsets.u += 1;
+        offsets.v += 1;
+        visit(shape, block, (plane, index) => {
+          next[plane][index] = fill[plane];
+        });
+        return;
+      }
       const vector = VECTORS[mode & ~RESIDUAL];
       if (!vector) throw new GlyphcastError(`Unknown block mode ${String(mode)}`);
       const [dx, dy] = vector;

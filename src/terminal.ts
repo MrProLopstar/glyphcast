@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { open, readFile } from 'node:fs/promises';
 import { decodeChunk, GlyphcastError, HEADER_SIZE, INDEX_TRAILER, indexLength, readHeader, readIndex, StreamReader, type Chunk, type StreamInfo } from './format.js';
-import { autoLevels, ease, luma, NEUTRAL, type Levels } from './levels.js';
+import { autoLevels, ease, luma, NEUTRAL, SHADOWS, type Levels } from './levels.js';
 import { probe } from './node.js';
 import { GLYPH_SETS, TINTS } from './looks.js';
 import { DEFAULT_GLYPHS } from './renderer.js';
@@ -96,7 +96,7 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
     }
     return out;
   };
-  const level = (color: readonly number[]): number => Math.min(1, Math.max(0, (luma(color[0] ?? 0, color[1] ?? 0, color[2] ?? 0) - 0.5) * levels.contrast + 0.5 + levels.brightness));
+  const level = (color: readonly number[]): number => Math.min(1, Math.max(0, (luma(color[0] ?? 0, color[1] ?? 0, color[2] ?? 0) - 0.5) * levels.contrast + 0.5 + levels.brightness)) ** SHADOWS;
   const paint = (color: readonly number[], lit: number): [number, number, number] => {
     if (tint) return [tint[0] * (0.35 + lit), tint[1] * (0.35 + lit), tint[2] * (0.35 + lit)];
     const gray = luma(color[0] ?? 0, color[1] ?? 0, color[2] ?? 0) * 255;

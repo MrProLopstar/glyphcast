@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+- Shadows keep detail: a tone curve lifts dark areas when choosing glyphs and their brightness, in the browser and the terminal
+- Flat areas cost less: a uniform block stores one value instead of every cell, about 5% smaller on films. Players before 0.7 cannot open files that use it
+
 ## 0.6.2
 
 - `--embed` skips videos without a sound track instead of failing

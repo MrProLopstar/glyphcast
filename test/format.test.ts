@@ -134,8 +134,9 @@ describe('levels', () => {
   it('maps luma to glyphs across the whole ramp', () => {
     expect(glyphIndex(0, NEUTRAL, 10)).toBe(0);
     expect(glyphIndex(1, NEUTRAL, 10)).toBe(9);
-    expect(glyphIndex(0.55, NEUTRAL, 10)).toBe(5);
-    expect(glyphIndex(0.3, { brightness: 0.2, contrast: 1 }, 10)).toBe(5);
+    expect(glyphIndex(0.55, NEUTRAL, 10)).toBe(6);
+    expect(glyphIndex(0.3, { brightness: 0.2, contrast: 1 }, 10)).toBe(6);
+    expect(glyphIndex(0.1, NEUTRAL, 10)).toBe(1);
   });
 });
 

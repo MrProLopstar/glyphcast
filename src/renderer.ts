@@ -63,8 +63,9 @@ uniform float captions;
 uniform float fill;
 const vec3 WEIGHTS = vec3(0.299, 0.587, 0.114);
 const float PI = 3.14159265;
+const float SHADOWS = 0.72;
 float leveled(float luma) {
-  return clamp((luma - 0.5) * contrast + 0.5 + brightness, 0.0, 1.0);
+  return pow(clamp((luma - 0.5) * contrast + 0.5 + brightness, 0.0, 1.0), SHADOWS);
 }
 float lumaAt(vec2 cell) {
   return dot(texelFetch(cells, ivec2(clamp(cell, vec2(0.0), grid - 1.0)), 0).rgb, WEIGHTS);

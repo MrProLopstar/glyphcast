@@ -5,6 +5,9 @@ export interface Levels {
 
 export const NEUTRAL: Levels = { brightness: 0, contrast: 1 };
 
+/** Gamma that lifts dark tones when choosing glyphs and their brightness, so shadows keep detail. */
+export const SHADOWS = 0.72;
+
 /** Rec. 601 luma of an RGB triple in 0–255, as 0–1. */
 export const luma = (r: number, g: number, b: number): number => (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 
@@ -37,6 +40,6 @@ export const ease = (current: Levels, target: Levels, amount = 0.15): Levels => 
 
 /** Index of the glyph for a luma after levels, as the shader computes it. */
 export const glyphIndex = (value: number, levels: Levels, glyphs: number): number => {
-  const adjusted = Math.min(Math.max((value - 0.5) * levels.contrast + 0.5 + levels.brightness, 0), 1);
+  const adjusted = Math.min(Math.max((value - 0.5) * levels.contrast + 0.5 + levels.brightness, 0), 1) ** SHADOWS;
   return Math.min(glyphs - 1, Math.floor(adjusted * glyphs));
 };
