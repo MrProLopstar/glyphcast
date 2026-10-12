@@ -1,8 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { open, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { decodeChunk, GlyphcastError, HEADER_SIZE, INDEX_TRAILER, indexLength, readHeader, readIndex, StreamReader, type Chunk, type StreamInfo } from './format.js';
 import { autoLevels, ease, luma, NEUTRAL, type Levels } from './levels.js';
 import { probe } from './node.js';
@@ -30,6 +27,8 @@ export interface TerminalOptions {
   readonly ffmpeg?: string;
   /** Path to ffplay, which plays the sound embedded in a `.gcast`. Default `ffplay` from PATH; without it playback is silent. */
   readonly ffplay?: string;
+  /** Name shown while loading. Default the input. */
+  readonly title?: string;
 }
 
 const channel = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
@@ -159,9 +158,9 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
 
 const screen = (output: NodeJS.WriteStream): { width: number; height: number; readonly close: () => void } => {
   output.write('\x1b[?1049h\x1b[?25l');
-  const view = { width: (output.columns || 120) - 1, height: Math.max(1, (output.rows || 40) - 1), close: () => undefined as void };
+  const view = { width: output.columns || 120, height: Math.max(1, (output.rows || 40) - 1), close: () => undefined as void };
   const resize = (): void => {
-    view.width = output.columns ? output.columns - 1 : view.width;
+    view.width = output.columns || view.width;
     view.height = Math.max(1, (output.rows || view.height + 1) - 1);
     output.write('\x1b[2J');
   };
@@ -202,10 +201,15 @@ interface Piece {
   readonly load: () => Promise<Uint8Array>;
 }
 
+interface AudioSource {
+  readonly size: number;
+  readonly read: (position: number, length: number) => Promise<Uint8Array>;
+}
+
 interface Library {
   readonly info: StreamInfo;
   readonly pieces: Piece[];
-  readonly sound: Uint8Array | null;
+  readonly audio: AudioSource | null;
   readonly complete: () => boolean;
   readonly close: () => void;
 }
@@ -215,8 +219,32 @@ const indexed = async (read: (offset: number, length: number) => Promise<Uint8Ar
   const length = indexLength(await read(Math.max(0, size - INDEX_TRAILER), Math.min(size, INDEX_TRAILER)));
   if (!length) return null;
   const entries = readIndex(await read(size - length, length));
-  const head = await read(HEADER_SIZE, (entries[0]?.offset ?? HEADER_SIZE) - HEADER_SIZE);
-  const sound = new StreamReader(info).push(head).filter((chunk) => chunk.frames === 0);
+  const region = (entries[0]?.offset ?? HEADER_SIZE) - HEADER_SIZE;
+  let audio: AudioSource | null = null;
+  if (region > 6) {
+    const top = await read(HEADER_SIZE, 6);
+    const piece = new DataView(top.buffer, top.byteOffset).getUint32(0, true);
+    const count = Math.ceil(region / (piece + 6));
+    const total = region - count * 6;
+    const at = (position: number): number => HEADER_SIZE + Math.floor(position / piece) * (piece + 6) + 6 + (position % piece);
+    audio = {
+      size: total,
+      read: async (position, wanted) => {
+        const length = Math.min(wanted, total - position);
+        if (length <= 0) return new Uint8Array(0);
+        const first = at(position);
+        const raw = await read(first, at(position + length - 1) + 1 - first);
+        const out = new Uint8Array(length);
+        for (let done = 0; done < length; ) {
+          const take = Math.min(length - done, piece - ((position + done) % piece));
+          const from = at(position + done) - first;
+          out.set(raw.subarray(from, from + take), done);
+          done += take;
+        }
+        return out;
+      },
+    };
+  }
   const pieces = entries.map((entry) => ({
     start: entry.start,
     frames: entry.frames,
@@ -225,7 +253,7 @@ const indexed = async (read: (offset: number, length: number) => Promise<Uint8Ar
       return read(entry.offset + 6, new DataView(top.buffer, top.byteOffset).getUint32(0, true));
     },
   }));
-  return { info, pieces, sound: sound.length ? concat(sound.map((chunk) => chunk.data)) : null, complete: () => true, close };
+  return { info, pieces, audio, complete: () => true, close };
 };
 
 const fromFile = async (path: string): Promise<Library> => {
@@ -273,9 +301,10 @@ const concat = (parts: readonly Uint8Array[]): Uint8Array => {
 };
 
 const fromChunks = (info: StreamInfo, chunks: Chunk[], complete: () => boolean): Library => {
-  const audio = chunks.filter((chunk) => chunk.frames === 0).map((chunk) => chunk.data);
+  const parts = chunks.filter((chunk) => chunk.frames === 0).map((chunk) => chunk.data);
+  const sound = concat(parts);
   const pieces = chunks.filter((chunk) => chunk.frames > 0).map((chunk) => ({ start: chunk.start, frames: chunk.frames, load: () => Promise.resolve(chunk.data) }));
-  return { info, pieces, sound: audio.length ? concat(audio) : null, complete, close: () => undefined };
+  return { info, pieces, audio: parts.length ? { size: sound.length, read: (position, length) => Promise.resolve(sound.subarray(position, position + length)) } : null, complete, close: () => undefined };
 };
 
 const fromUrl = async (url: string): Promise<Library> => {
@@ -307,39 +336,91 @@ const clock = (seconds: number): string => {
   return hours ? `${hours}:${rest}` : rest;
 };
 
-const sounds = (library: Library, ffplay: string): { readonly start: (at: number) => void; readonly stop: () => void; readonly close: () => void } => {
-  if (!library.sound) return { start: () => undefined, stop: () => undefined, close: () => undefined };
-  const folder = mkdtempSync(join(tmpdir(), 'glyphcast-'));
-  const file = join(folder, 'sound');
-  writeFileSync(file, library.sound);
+const pages = (bytes: Uint8Array): number[] => {
+  const found: number[] = [];
+  for (let at = 0; at + 4 <= bytes.length; at += 1) if (bytes[at] === 0x4f && bytes[at + 1] === 0x67 && bytes[at + 2] === 0x67 && bytes[at + 3] === 0x53) found.push(at);
+  return found;
+};
+
+const sounds = (audio: AudioSource | null, total: () => number, ffplay: string): { readonly start: (at: number) => Promise<number>; readonly stop: () => void; readonly close: () => void } => {
   let child: ChildProcess | null = null;
+  let session = 0;
   let missing = false;
   const stop = (): void => {
+    session += 1;
     child?.kill();
     child = null;
   };
+  if (!audio) return { start: (at) => Promise.resolve(at), stop, close: stop };
   process.once('exit', stop);
+  const intro = audio.read(0, Math.min(audio.size, 65536)).then((first) => {
+    const found = pages(first);
+    if (found[0] !== 0 || found.length < 3) return null;
+    const head = first.subarray(0, found[2]);
+    const opus = new TextDecoder().decode(head).indexOf('OpusHead');
+    return { head, preskip: opus >= 0 ? new DataView(head.buffer, head.byteOffset).getUint16(opus + 10, true) : 0 };
+  });
+  const pump = async (current: number, process$: ChildProcess, from: number): Promise<void> => {
+    const input = process$.stdin;
+    if (!input) return;
+    for (let at = from; at < audio.size && current === session; ) {
+      const part = await audio.read(at, 262144);
+      if (current !== session || part.length === 0) return;
+      at += part.length;
+      if (!input.write(part)) await new Promise((resolve) => input.once('drain', resolve));
+    }
+    if (current === session) input.end();
+  };
   return {
-    start: (at) => {
+    start: async (at) => {
       stop();
-      if (missing) return;
-      child = spawn(ffplay, ['-nodisp', '-autoexit', '-loglevel', 'quiet', '-ss', at.toFixed(2), file], { stdio: 'ignore' });
-      child.on('error', () => (missing = true));
+      const current = session;
+      if (missing) return at;
+      const ogg = await intro;
+      let from = 0;
+      let actual = at;
+      if (ogg && at > 0.5) {
+        const guess = Math.floor((at / Math.max(total(), 0.001)) * audio.size);
+        const window = await audio.read(guess, 65536);
+        const page = pages(window)[0];
+        if (page !== undefined && page + 27 < window.length) {
+          const view = new DataView(window.buffer, window.byteOffset);
+          const granule = Number(view.getBigInt64(page + 6, true));
+          const segments = window.subarray(page + 27, page + 27 + (window[page + 26] ?? 0));
+          const packets = segments.filter((value) => value < 255).length;
+          actual = Math.max(0, (granule - ogg.preskip) / 48000 - packets * 0.02);
+          from = guess + page;
+        }
+      }
+      if (current !== session) return actual;
+      const ss = !ogg && at > 0.5 ? ['-ss', at.toFixed(2)] : [];
+      const started = spawn(ffplay, ['-nodisp', '-autoexit', '-loglevel', 'quiet', ...ss, '-i', 'pipe:0'], { stdio: ['pipe', 'ignore', 'ignore'] });
+      child = started;
+      started.on('error', () => (missing = true));
+      started.stdin.on('error', () => undefined);
+      if (ogg && from > 0) started.stdin.write(ogg.head);
+      void pump(current, started, from).catch(() => undefined);
+      return actual;
     },
     stop,
-    close: () => {
-      stop();
-      rmSync(folder, { recursive: true, force: true });
-    },
+    close: stop,
   };
 };
 
+const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
+
 const playStream = async (input: string, options: TerminalOptions, output: NodeJS.WriteStream): Promise<void> => {
-  const library = /^https?:\/\//.test(input) ? ((await fromRanges(input)) ?? (await fromUrl(input))) : await fromFile(input);
+  let turn = 0;
+  const loading = output.isTTY ? setInterval(() => output.write(`\r\x1b[2K${SPINNER[(turn += 1) % SPINNER.length]} glyphcast: загрузка ${options.title ?? input}`), 80) : null;
+  const library = await (/^https?:\/\//.test(input) ? fromRanges(input).then((found) => found ?? fromUrl(input)) : fromFile(input)).finally(() => {
+    if (loading) clearInterval(loading);
+    if (output.isTTY) output.write('\r\x1b[2K');
+  });
   const { info } = library;
   const total = (): number => (info.frameCount || library.pieces.reduce((sum, piece) => Math.max(sum, piece.start + piece.frames), 0)) / info.fps;
-  const audio = sounds(library, options.ffplay ?? 'ffplay');
+  const audio = sounds(library.audio, total, options.ffplay ?? 'ffplay');
   const view = screen(output);
+  output.write(`\x1b[${Math.max(1, Math.floor(view.height / 2))};${Math.max(1, Math.floor(view.width / 2) - 6)}H${SPINNER[0]} загрузка`);
   if (output.isTTY) {
     const fitted = fitTerminal(info.cols, info.rows, 1000, 1000);
     const scale = Math.min((output.columns || 120) / fitted.width, ((output.rows || 40) - 1) / fitted.height);
@@ -362,10 +443,18 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   let levels = NEUTRAL;
   const cache = new Map<number, Promise<Uint8ClampedArray[]>>();
   const now = (): number => Math.min(total(), playing ? base + (performance.now() - startedAt) / 1000 : base);
+  const sound = (): void => {
+    const wanted = base;
+    void audio.start(wanted).then((actual) => {
+      if (!playing || base !== wanted) return;
+      base = actual;
+      startedAt = performance.now();
+    });
+  };
   const jump = (seconds: number): void => {
     base = Math.max(0, Math.min(total(), seconds));
     startedAt = performance.now();
-    if (playing) audio.start(base);
+    if (playing) sound();
   };
   const toggle = (): void => {
     if (playing) {
@@ -375,7 +464,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     } else {
       playing = true;
       startedAt = performance.now();
-      audio.start(base);
+      sound();
     }
   };
   const frames = (piece: Piece): Promise<Uint8ClampedArray[]> => {
@@ -433,10 +522,13 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     input$.on('data', keys);
     output.write('\x1b[?1000h\x1b[?1006h\x1b[16t');
   }
-  audio.start(0);
+  sound();
   try {
     let shown = -1;
     let shownStatus = '';
+    let shownLayout = '';
+    let pictureLeft = 0;
+    let pictureWidth = 0;
     let drawnWidth = view.width;
     let drawnHeight = view.height;
     while (!quit) {
@@ -453,6 +545,14 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
           const fitted = fitTerminal(info.cols, info.rows, view.width, view.height, cellRatio);
           const left = Math.floor((view.width - fitted.width) / 2);
           const top = Math.floor((view.height - fitted.height) / 2);
+          const layout = `${left},${top},${fitted.width},${fitted.height}`;
+          if (layout !== shownLayout) {
+            shownLayout = layout;
+            output.write('\x1b[0m\x1b[2J');
+            shownStatus = '';
+          }
+          pictureLeft = left;
+          pictureWidth = fitted.width;
           const text = ansiFrame(previous ?? frame, info.cols, info.rows, 4, levels, {
             width: view.width,
             height: view.height,
@@ -476,16 +576,18 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       }
       const settings = `${MODES[look.mode]?.[0]}, ${(GLYPH_SETS[look.glyphs]?.[0] ?? '').toLowerCase()}, ${(TINTS[look.tint]?.[0] ?? '').toLowerCase()}, нас. ${look.boost.toFixed(1)}, фон ${FILLS[look.fill]}`;
       const hints = interactive ? '  пробел ←→ m g c [ ] b q' : '';
-      const bar = Math.max(8, view.width - 24 - settings.length - hints.length);
+      const span = pictureWidth >= 72 ? pictureWidth : view.width;
+      const offset = pictureWidth >= 72 ? pictureLeft : 0;
+      const bar = Math.max(8, span - 24 - settings.length - hints.length);
       const filled = Math.round(share * bar);
       const head = `${playing ? '▶' : '❚❚'} ${clock(time)} / ${clock(total())} `;
-      barStart = head.length + 1;
+      barStart = offset + head.length + 1;
       barWidth = bar;
       const status = `${head}${'█'.repeat(filled)}${'░'.repeat(bar - filled)}  ${settings}${hints}`;
-      const line = status.slice(0, view.width - 1);
+      const line = status.slice(0, span);
       if (line !== shownStatus || redraw) {
         shownStatus = line;
-        if (!output.write(`\x1b[${view.height + 1};1H\x1b[0m\x1b[2K${line}`)) await new Promise((resolve) => output.once('drain', resolve));
+        if (!output.write(`\x1b[${view.height + 1};1H\x1b[0m\x1b[2K\x1b[${view.height + 1};${offset + 1}H${line}`)) await new Promise((resolve) => output.once('drain', resolve));
       }
       if (playing && time >= total() && library.complete()) break;
       await new Promise((resolve) => setTimeout(resolve, Math.max(5, 1000 / info.fps / 2)));

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5
+
+- Terminal player starts at once: embedded sound streams into ffplay instead of downloading first, seeking reads only the needed part
+- Loading spinner while a file or hub video opens
+- The picture and the status bar are centered together, stale edges are cleared
+
 ## 0.5.4
 
 - `glyphcast hub [search]` lists the gcast hub, `glyphcast play hub:<name>` plays from it

@@ -77,7 +77,7 @@ glyphcast play hub:<name>   files from ${files}`);
       const id = video?.id ?? name;
       if (!/^[\w-]{11}$/.test(id)) throw new Error(`No video "${name}" in the hub; see glyphcast hub`);
       if (video) console.log(video.title);
-      await playInTerminal(`${files}/v/${id}.gcast`, { ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
+      await playInTerminal(`${files}/v/${id}.gcast`, { title: video?.title ?? `hub:${name}`, ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
       return;
     }
     await playInTerminal(input, { ...(values.cols ? { cols: Number(values.cols) } : {}), ...(values.fps ? { fps: Number(values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
