@@ -22,6 +22,8 @@ export interface LookOptions {
   readonly edges?: boolean;
   /** Tube screen look: scanlines, vignette, glow. Default false. */
   readonly crt?: boolean;
+  /** Cell background tinted by its color, 0 for pure black. Default 0.25. */
+  readonly fill?: number;
 }
 
 export interface PlayerOptions extends LookOptions {
@@ -96,6 +98,7 @@ export class GlyphPlayer extends EventTarget {
   private mediaClock = false;
   private stalled = false;
   private cues: readonly Cue[] = [];
+  private previous: Uint8ClampedArray | null = null;
   private caption: string | null = null;
 
   constructor(readonly canvas: HTMLCanvasElement, options: PlayerOptions = {}) {
@@ -110,6 +113,7 @@ export class GlyphPlayer extends EventTarget {
       mode: options.mode ?? 'glyphs',
       edges: options.edges ?? false,
       crt: options.crt ?? false,
+      fill: options.fill ?? 0.25,
     };
     this.renderer = new GlyphRenderer(canvas, { glyphs: this.look.glyphs, background: this.look.background, ...(options.glyphSize ? { glyphSize: options.glyphSize } : {}), ...(options.font ? { font: options.font } : {}) });
     const context = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
@@ -280,6 +284,7 @@ export class GlyphPlayer extends EventTarget {
 
   private unload(): void {
     this.pauseLoop();
+    this.previous = null;
     this.stalled = false;
     this.mediaClock = false;
     if (this.stream) this.stream.abort.abort();
@@ -480,13 +485,30 @@ export class GlyphPlayer extends EventTarget {
 
   private paint(pixels: Uint8ClampedArray, cols: number, rows: number): void {
     this.lastFrame = { pixels, cols, rows };
+    pixels = this.steady(pixels);
     this.levels = this.look.autoLevels ? ease(this.levels, autoLevels(pixels)) : NEUTRAL;
     const caption = captionAt(this.cues, this.currentTime);
     if (caption !== this.caption) {
       this.caption = caption;
       this.renderer.setCaption(caption);
     }
-    this.renderer.draw(pixels, cols, rows, { levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt });
+    this.renderer.draw(pixels, cols, rows, { levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt, fill: this.look.fill });
+  }
+
+  private steady(pixels: Uint8ClampedArray): Uint8ClampedArray {
+    const previous = this.previous;
+    if (!previous || previous.length !== pixels.length) {
+      this.previous = pixels.slice();
+      return pixels;
+    }
+    const out = new Uint8ClampedArray(pixels.length);
+    for (let index = 0; index < pixels.length; index += 1) {
+      const before = previous[index] ?? 0;
+      const delta = (pixels[index] ?? 0) - before;
+      out[index] = delta > -24 && delta < 24 ? before + delta / 3 : before + delta;
+    }
+    this.previous = out;
+    return out;
   }
 
   /** Draws the frame for the current time. */

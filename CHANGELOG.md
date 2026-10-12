@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Softer picture on large screens: cell backgrounds take a dim version of their color (`fill`, slider in settings), small frame-to-frame jitter is smoothed out, glyphs are semibold
+
 ## 0.4.0
 
 - Sound inside `.gcast`: `Encoder.addAudio()`, `--embed` and `embedAudio` store Opus before the frames; the player uses it as the clock

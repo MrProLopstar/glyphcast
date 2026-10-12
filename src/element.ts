@@ -137,7 +137,7 @@ type DocumentPip = { requestWindow: (options: { width: number; height: number })
  * `muted`, `loop`. The `player` property gives the underlying `GlyphPlayer`.
  */
 export class GlyphPlayerElement extends HTMLElement {
-  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'mode', 'edges', 'crt'];
+  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt'];
 
   readonly player: GlyphPlayer;
   private readonly root: ShadowRoot;
@@ -197,6 +197,7 @@ export class GlyphPlayerElement extends HTMLElement {
       ...(tint !== null ? { tint: tint || null } : {}),
       ...(this.hasAttribute('boost') ? { boost: Number(this.getAttribute('boost')) } : {}),
       ...(this.hasAttribute('autolevels') ? { autoLevels: this.getAttribute('autolevels') !== 'false' } : {}),
+      ...(this.hasAttribute('fill') ? { fill: Number(this.getAttribute('fill')) } : {}),
       ...(this.hasAttribute('mode') ? { mode: this.getAttribute('mode') as RenderMode } : {}),
       edges: this.flag('edges'),
       crt: this.flag('crt'),
@@ -465,14 +466,19 @@ export class GlyphPlayerElement extends HTMLElement {
       chips('Символы', GLYPH_SETS, look.glyphs, (value) => player.configure({ glyphs: String(value) })),
       chips('Цвет', TINTS, look.tint ?? null, (value) => player.configure({ tint: (value as string | null) ?? null })),
     );
-    const boost = document.createElement('div');
-    boost.innerHTML = `<h4>Насыщенность</h4><div class="line"><input type="range" min="0" max="2.5" step="0.05" value="${look.boost ?? 1.3}"><output>${(look.boost ?? 1.3).toFixed(2)}</output></div>`;
-    const slider = boost.querySelector('input');
-    slider?.addEventListener('input', () => {
-      player.configure({ boost: Number(slider.value) });
-      const output = boost.querySelector('output');
-      if (output) output.textContent = Number(slider.value).toFixed(2);
-    });
+    const range = (title: string, min: number, max: number, value: number, change: (next: number) => void): HTMLElement => {
+      const wrap = document.createElement('div');
+      wrap.innerHTML = `<h4>${title}</h4><div class="line"><input type="range" min="${min}" max="${max}" step="0.05" value="${value}"><output>${value.toFixed(2)}</output></div>`;
+      const slider = wrap.querySelector('input');
+      slider?.addEventListener('input', () => {
+        change(Number(slider.value));
+        const output = wrap.querySelector('output');
+        if (output) output.textContent = Number(slider.value).toFixed(2);
+      });
+      return wrap;
+    };
+    const boost = range('Насыщенность', 0, 2.5, look.boost ?? 1.3, (next) => player.configure({ boost: next }));
+    const fill = range('Подсветка фона', 0, 1, look.fill ?? 0.25, (next) => player.configure({ fill: next }));
     const toggle = (label: string, on: boolean, change: (next: boolean) => void): HTMLElement => {
       const button = document.createElement('button');
       button.className = 'toggle';
@@ -488,6 +494,7 @@ export class GlyphPlayerElement extends HTMLElement {
     menu.replaceChildren(
       ...parts,
       boost,
+      fill,
       toggle('Автояркость и контраст', look.autoLevels !== false, (next) => player.configure({ autoLevels: next })),
       toggle('Контуры', look.edges === true, (next) => player.configure({ edges: next })),
       toggle('Кинескоп', look.crt === true, (next) => player.configure({ crt: next })),

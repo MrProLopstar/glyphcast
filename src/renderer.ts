@@ -30,6 +30,8 @@ export interface FrameStyle {
   readonly edges?: boolean;
   /** Scanlines, vignette and glow of a tube screen. Default false. */
   readonly crt?: boolean;
+  /** How much each cell's background takes its color, 0 for pure black. Softens contrast on large screens. Default 0.25. */
+  readonly fill?: number;
 }
 
 const VERTEX = `#version 300 es
@@ -58,6 +60,7 @@ uniform int mode;
 uniform float edges;
 uniform float crt;
 uniform float captions;
+uniform float fill;
 const vec3 WEIGHTS = vec3(0.299, 0.587, 0.114);
 const float PI = 3.14159265;
 float leveled(float luma) {
@@ -118,7 +121,7 @@ void main() {
     }
     ink = texture(atlas, vec2((index + local.x) / (glyphs + 4.0), local.y)).r;
   }
-  vec3 result = mix(background, glyph, ink);
+  vec3 result = mix(mix(background, glyph * 0.5, fill), glyph, ink);
   if (crt > 0.5) {
     result += paint(source, level) * 0.22;
     result *= 0.6 + 0.4 * abs(sin(position.y * PI * 2.0));
@@ -190,7 +193,7 @@ export class GlyphRenderer {
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
 
     this.uniforms = Object.fromEntries(
-      ['cells', 'atlas', 'overlay', 'grid', 'glyphs', 'brightness', 'contrast', 'boost', 'background', 'tint', 'mode', 'edges', 'crt', 'captions'].map((name) => [name, gl.getUniformLocation(program, name)]),
+      ['cells', 'atlas', 'overlay', 'grid', 'glyphs', 'brightness', 'contrast', 'boost', 'background', 'tint', 'mode', 'edges', 'crt', 'captions', 'fill'].map((name) => [name, gl.getUniformLocation(program, name)]),
     );
 
     this.cellsTexture = this.texture(0);
@@ -226,7 +229,7 @@ export class GlyphRenderer {
     context.fillStyle = '#fff';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.font = `${Math.round(this.cellHeight * 0.92)}px ${this.font}`;
+    context.font = `600 ${Math.round(this.cellHeight * 0.92)}px ${this.font}`;
     [...list, ...EDGE_GLYPHS].forEach((glyph, index) => context.fillText(glyph, (index + 0.5) * this.cellWidth, this.cellHeight * 0.54));
     const { gl } = this;
     gl.activeTexture(gl.TEXTURE1);
@@ -317,6 +320,7 @@ export class GlyphRenderer {
     gl.uniform1i(this.uniforms['mode'] ?? null, Math.max(0, MODES.indexOf(style.mode ?? 'glyphs')));
     gl.uniform1f(this.uniforms['edges'] ?? null, style.edges ? 1 : 0);
     gl.uniform1f(this.uniforms['crt'] ?? null, style.crt ? 1 : 0);
+    gl.uniform1f(this.uniforms['fill'] ?? null, style.fill ?? 0.25);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }
