@@ -100,7 +100,7 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
 
   <h2>Конвертер</h2>
   <section class="converter">
-    <p class="lead">Перегоните своё видео в <code>.gcast</code> прямо в браузере: файл никуда не отправляется. Видео прогоняется вчетверо быстрее реального времени, звук кодируется в Opus отдельно за пару секунд.</p>
+    <p class="lead">Перегоните своё видео в <code>.gcast</code> прямо в браузере: файл никуда не отправляется. Видео прогоняется вчетверо быстрее реального времени, звук кодируется в Opus отдельно за пару секунд. Для файлов больше 300 МБ или длиннее 20 минут звук в браузере не поместится в память, такие лучше конвертировать командой <code>npx glyphcast encode фильм.mp4 --embed</code>.</p>
     <div class="row">
       <label class="button">Выбрать видео<input id="convert-file" type="file" accept="video/*"></label>
       <label class="field">Колонок <select id="convert-cols"><option>120</option><option selected>160</option><option>180</option><option>240</option></select></label>
@@ -241,6 +241,7 @@ const encodeOpus = async (file) => {
     const data = new Float32Array(length * channels);
     for (let channel = 0; channel < channels; channel += 1) data.set(decoded.getChannelData(channel).subarray(start, start + length), channel * length);
     encoder.encode(new AudioData({ format: 'f32-planar', sampleRate: 48000, numberOfFrames: length, numberOfChannels: channels, timestamp: (start / 48000) * 1e6, data }));
+    while (encoder.encodeQueueSize > 4) await new Promise((resolve) => setTimeout(resolve, 5));
   }
   await encoder.flush();
   encoder.close();
@@ -286,7 +287,7 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   const video = document.createElement('video');
   video.src = URL.createObjectURL(file);
   video.playsInline = true;
-  video.volume = withAudio && !('AudioEncoder' in window) ? 1 : 0;
+
   await new Promise((resolve, reject) => {
     video.addEventListener('loadedmetadata', resolve, { once: true });
     video.addEventListener('error', () => reject(new Error('Браузер не может открыть это видео')), { once: true });
@@ -295,9 +296,12 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   const canvas = new OffscreenCanvas(cols, rows);
   const context = canvas.getContext('2d', { willReadFrequently: true });
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.round(fps * 2) });
-  const fast = withAudio && 'AudioEncoder' in window;
+  const large = file.size > 300 * 1048576 || video.duration > 1200;
+  const fast = withAudio && !large && 'AudioEncoder' in window;
+  const record = withAudio && !large && !fast;
   const quickSound = fast ? encodeOpus(file).catch(() => null) : null;
-  const stopAudio = withAudio && !fast ? recordAudio(video, audioContext) : null;
+  video.volume = record ? 1 : 0;
+  const stopAudio = record ? recordAudio(video, audioContext) : null;
   let written = 0;
   const capture = (time) => {
     context.drawImage(video, 0, 0, cols, rows);
@@ -320,7 +324,7 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   const sound = (stopAudio ? await stopAudio() : await quickSound) ?? new Uint8Array(0);
   const pieces = [];
   for (let at = 0; at < sound.length; at += 65536) pieces.push(frameChunk({ start: 0, frames: 0, data: sound.subarray(at, at + 65536) }));
-  return { bytes: new Blob([stream.subarray(0, HEADER_SIZE), ...pieces, stream.subarray(HEADER_SIZE)]), sound: sound.length, cols, rows };
+  return { bytes: new Blob([stream.subarray(0, HEADER_SIZE), ...pieces, stream.subarray(HEADER_SIZE)]), sound: sound.length, cols, rows, droppedSound: withAudio && large };
 };
 
 $('convert-start').addEventListener('click', async () => {
@@ -331,10 +335,10 @@ $('convert-start').addEventListener('click', async () => {
   document.querySelector('.result').hidden = true;
   bar.hidden = false;
   const withAudio = $('convert-audio').checked;
-  const context = withAudio && !('AudioEncoder' in window) ? new AudioContext() : null;
+  const context = withAudio ? new AudioContext() : null;
   try {
     await context?.resume();
-    const result = await convert(source, Number($('convert-cols').value), Number($('convert-fps').value), withAudio && (context ?? true), (share) => {
+    const result = await convert(source, Number($('convert-cols').value), Number($('convert-fps').value), context, (share) => {
       fill.style.width = `${Math.min(100, share * 100).toFixed(1)}%`;
       $('convert-status').textContent = `Конвертация: ${Math.round(Math.min(1, share) * 100)}%`;
     });
@@ -345,7 +349,7 @@ $('convert-start').addEventListener('click', async () => {
     $('size-gcast').textContent = megabytes(result.bytes.size);
     $('size-win').textContent = ratio >= 1 ? `${ratio.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}×` : 'нет';
     $('meter-fill').style.width = `${Math.min(100, (result.bytes.size / source.size) * 100)}%`;
-    $('size-note').textContent = `${result.cols}×${result.rows} символов${result.sound ? `, из них звук ${megabytes(result.sound)}` : ', без звука'}. Полоса показывает, сколько осталось от исходника: ${Math.round((result.bytes.size / source.size) * 100)}%.`;
+    $('size-note').textContent = `${result.cols}×${result.rows} символов${result.sound ? `, из них звук ${megabytes(result.sound)}` : result.droppedSound ? '. Звук для такого большого файла в браузере не помещается в память, поэтому его нет; фильм со звуком сделайте командой npx glyphcast encode фильм.mp4 --embed' : ', без звука'}. Полоса показывает, сколько осталось от исходника: ${Math.round((result.bytes.size / source.size) * 100)}%.`;
     $('convert-save').href = output;
     $('convert-save').download = source.name.replace(/\.[^.]+$/, '') + '.gcast';
     $('convert-status').textContent = 'Готово';
@@ -355,6 +359,7 @@ $('convert-start').addEventListener('click', async () => {
   } finally {
     bar.hidden = true;
     $('convert-start').disabled = false;
+    if (context && context.state !== 'closed') void context.close();
   }
 });
 
