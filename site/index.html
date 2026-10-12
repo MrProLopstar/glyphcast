@@ -190,8 +190,7 @@ $('convert-file').addEventListener('change', (event) => {
   $('convert-status').textContent = source ? `${source.name}, ${megabytes(source.size)}` : '';
 });
 
-const recordAudio = (video) => {
-  const context = new AudioContext();
+const recordAudio = (video, context) => {
   const destination = context.createMediaStreamDestination();
   context.createMediaElementSource(video).connect(destination);
   const type = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find((candidate) => MediaRecorder.isTypeSupported(candidate));
@@ -208,7 +207,8 @@ const recordAudio = (video) => {
   };
 };
 
-const convert = async (file, cols, fps, withAudio, progress) => {
+const convert = async (file, cols, fps, audioContext, progress) => {
+  const withAudio = Boolean(audioContext);
   const video = document.createElement('video');
   video.src = URL.createObjectURL(file);
   video.playsInline = true;
@@ -221,7 +221,7 @@ const convert = async (file, cols, fps, withAudio, progress) => {
   const canvas = new OffscreenCanvas(cols, rows);
   const context = canvas.getContext('2d', { willReadFrequently: true });
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.round(fps * 2) });
-  const stopAudio = withAudio ? recordAudio(video) : null;
+  const stopAudio = audioContext ? recordAudio(video, audioContext) : null;
   let written = 0;
   const capture = (time) => {
     context.drawImage(video, 0, 0, cols, rows);
@@ -255,8 +255,10 @@ $('convert-start').addEventListener('click', async () => {
   document.querySelector('.result').hidden = true;
   bar.hidden = false;
   const withAudio = $('convert-audio').checked;
+  const context = withAudio ? new AudioContext() : null;
   try {
-    const result = await convert(source, Number($('convert-cols').value), Number($('convert-fps').value), withAudio, (share) => {
+    await context?.resume();
+    const result = await convert(source, Number($('convert-cols').value), Number($('convert-fps').value), context, (share) => {
       fill.style.width = `${Math.min(100, share * 100).toFixed(1)}%`;
       $('convert-status').textContent = `Конвертация: ${Math.round(Math.min(1, share) * 100)}%${withAudio ? ', идёт в реальном времени из-за звука' : ''}`;
     });
