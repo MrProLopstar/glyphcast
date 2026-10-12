@@ -100,7 +100,7 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
 
   <h2>Конвертер</h2>
   <section class="converter">
-    <p class="lead">Перегоните своё видео в <code>.gcast</code> прямо в браузере: файл никуда не отправляется. Видео проигрывается один раз, поэтому со звуком конвертация идёт в реальном времени, а без звука в несколько раз быстрее.</p>
+    <p class="lead">Перегоните своё видео в <code>.gcast</code> прямо в браузере: файл никуда не отправляется. Видео прогоняется вчетверо быстрее реального времени, звук кодируется в Opus отдельно за пару секунд.</p>
     <div class="row">
       <label class="button">Выбрать видео<input id="convert-file" type="file" accept="video/*"></label>
       <label class="field">Колонок <select id="convert-cols"><option>120</option><option selected>160</option><option>180</option><option>240</option></select></label>
@@ -190,6 +190,80 @@ $('convert-file').addEventListener('change', (event) => {
   $('convert-status').textContent = source ? `${source.name}, ${megabytes(source.size)}` : '';
 });
 
+const CRC = new Uint32Array(256).map((_, index) => {
+  let value = index << 24;
+  for (let bit = 0; bit < 8; bit += 1) value = value & 0x80000000 ? (value << 1) ^ 0x04c11db7 : value << 1;
+  return value >>> 0;
+});
+
+const oggPage = (packets, granule, serial, sequence, flags) => {
+  const lacing = packets.flatMap((packet) => [...Array(Math.floor(packet.length / 255)).fill(255), packet.length % 255]);
+  const body = packets.reduce((sum, packet) => sum + packet.length, 0);
+  const page = new Uint8Array(27 + lacing.length + body);
+  const view = new DataView(page.buffer);
+  page.set([0x4f, 0x67, 0x67, 0x53, 0, flags]);
+  view.setBigInt64(6, BigInt(granule), true);
+  view.setUint32(14, serial, true);
+  view.setUint32(18, sequence, true);
+  page[26] = lacing.length;
+  page.set(lacing, 27);
+  let at = 27 + lacing.length;
+  for (const packet of packets) {
+    page.set(packet, at);
+    at += packet.length;
+  }
+  let crc = 0;
+  for (const byte of page) crc = ((crc << 8) ^ CRC[((crc >>> 24) ^ byte) & 255]) >>> 0;
+  view.setUint32(22, crc, true);
+  return page;
+};
+
+const encodeOpus = async (file) => {
+  const decoded = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(await file.arrayBuffer());
+  const channels = Math.min(2, decoded.numberOfChannels);
+  const packets = [];
+  let head = null;
+  const encoder = new AudioEncoder({
+    output: (chunk, meta) => {
+      const bytes = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(bytes);
+      packets.push(bytes);
+      if (meta?.decoderConfig?.description && !head) head = new Uint8Array(meta.decoderConfig.description instanceof ArrayBuffer ? meta.decoderConfig.description : meta.decoderConfig.description.buffer);
+    },
+    error: (error) => {
+      throw error;
+    },
+  });
+  encoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: channels, bitrate: 64000 });
+  const step = 48000;
+  for (let start = 0; start < decoded.length; start += step) {
+    const length = Math.min(step, decoded.length - start);
+    const data = new Float32Array(length * channels);
+    for (let channel = 0; channel < channels; channel += 1) data.set(decoded.getChannelData(channel).subarray(start, start + length), channel * length);
+    encoder.encode(new AudioData({ format: 'f32-planar', sampleRate: 48000, numberOfFrames: length, numberOfChannels: channels, timestamp: (start / 48000) * 1e6, data }));
+  }
+  await encoder.flush();
+  encoder.close();
+  if (!head) {
+    head = new Uint8Array(19);
+    head.set([0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 1, channels]);
+    new DataView(head.buffer).setUint16(10, 312, true);
+    new DataView(head.buffer).setUint32(12, 48000, true);
+  }
+  const tags = new Uint8Array([0x4f, 0x70, 0x75, 0x73, 0x54, 0x61, 0x67, 0x73, 9, 0, 0, 0, ...new TextEncoder().encode('glyphcast'), 0, 0, 0, 0]);
+  const preskip = new DataView(head.buffer, head.byteOffset).getUint16(10, true);
+  const serial = 0x67637374;
+  const pages = [oggPage([head], 0, serial, 0, 2), oggPage([tags], 0, serial, 1, 0)];
+  let granule = 0;
+  for (let at = 0; at < packets.length; at += 50) {
+    const group = packets.slice(at, at + 50);
+    granule += group.length * 960;
+    const last = at + 50 >= packets.length;
+    pages.push(oggPage(group, last ? decoded.length + preskip : granule, serial, pages.length, last ? 4 : 0));
+  }
+  return new Uint8Array(await new Blob(pages).arrayBuffer());
+};
+
 const recordAudio = (video, context) => {
   const destination = context.createMediaStreamDestination();
   context.createMediaElementSource(video).connect(destination);
@@ -212,7 +286,7 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   const video = document.createElement('video');
   video.src = URL.createObjectURL(file);
   video.playsInline = true;
-  video.muted = !withAudio;
+  video.volume = withAudio && !('AudioEncoder' in window) ? 1 : 0;
   await new Promise((resolve, reject) => {
     video.addEventListener('loadedmetadata', resolve, { once: true });
     video.addEventListener('error', () => reject(new Error('Браузер не может открыть это видео')), { once: true });
@@ -221,7 +295,9 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   const canvas = new OffscreenCanvas(cols, rows);
   const context = canvas.getContext('2d', { willReadFrequently: true });
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.round(fps * 2) });
-  const stopAudio = audioContext ? recordAudio(video, audioContext) : null;
+  const fast = withAudio && 'AudioEncoder' in window;
+  const quickSound = fast ? encodeOpus(file).catch(() => null) : null;
+  const stopAudio = withAudio && !fast ? recordAudio(video, audioContext) : null;
   let written = 0;
   const capture = (time) => {
     context.drawImage(video, 0, 0, cols, rows);
@@ -232,7 +308,7 @@ const convert = async (file, cols, fps, audioContext, progress) => {
     }
     progress(time / video.duration);
   };
-  video.playbackRate = withAudio ? 1 : 4;
+  video.playbackRate = stopAudio ? 1 : 4;
   const finished = new Promise((resolve) => video.addEventListener('ended', resolve, { once: true }));
   const timer = setInterval(() => capture(video.currentTime), 1000 / fps / video.playbackRate / 2);
   await video.play();
@@ -241,7 +317,7 @@ const convert = async (file, cols, fps, audioContext, progress) => {
   capture(video.duration);
   const stream = await encoder.finish();
   URL.revokeObjectURL(video.src);
-  const sound = stopAudio ? await stopAudio() : new Uint8Array(0);
+  const sound = (stopAudio ? await stopAudio() : await quickSound) ?? new Uint8Array(0);
   const pieces = [];
   for (let at = 0; at < sound.length; at += 65536) pieces.push(frameChunk({ start: 0, frames: 0, data: sound.subarray(at, at + 65536) }));
   return { bytes: new Blob([stream.subarray(0, HEADER_SIZE), ...pieces, stream.subarray(HEADER_SIZE)]), sound: sound.length, cols, rows };
@@ -255,12 +331,12 @@ $('convert-start').addEventListener('click', async () => {
   document.querySelector('.result').hidden = true;
   bar.hidden = false;
   const withAudio = $('convert-audio').checked;
-  const context = withAudio ? new AudioContext() : null;
+  const context = withAudio && !('AudioEncoder' in window) ? new AudioContext() : null;
   try {
     await context?.resume();
-    const result = await convert(source, Number($('convert-cols').value), Number($('convert-fps').value), context, (share) => {
+    const result = await convert(source, Number($('convert-cols').value), Number($('convert-fps').value), withAudio && (context ?? true), (share) => {
       fill.style.width = `${Math.min(100, share * 100).toFixed(1)}%`;
-      $('convert-status').textContent = `Конвертация: ${Math.round(Math.min(1, share) * 100)}%${withAudio ? ', идёт в реальном времени из-за звука' : ''}`;
+      $('convert-status').textContent = `Конвертация: ${Math.round(Math.min(1, share) * 100)}%`;
     });
     if (output) URL.revokeObjectURL(output);
     output = URL.createObjectURL(result.bytes);
