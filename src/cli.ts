@@ -16,6 +16,8 @@ const USAGE = `glyphcast: video as glyphs
   glyphcast play <file.gcast | stream URL | video> [--cols width]
       plays in the terminal; for .gcast: Space pause, ←/→ 5 s, J/L 10 s, 0-9 jump, M render mode, G glyphs,
       C colors, [ ] saturation, B background, Q quit; sound via ffplay
+  glyphcast hub [search]
+      lists open videos in the gcast hub; play them with glyphcast play hub:<name>
   glyphcast info <file.gcast>
   glyphcast serve [--port 8787] [--dir videos] [--no-youtube] [--yt-dlp path] [--ffmpeg path]
       live .gcast streams from YouTube links and videos in --dir, for <glyph-player>
@@ -52,12 +54,32 @@ const main = async (): Promise<void> => {
     console.log(`glyphcast serve: http://127.0.0.1:${port}`);
     return;
   }
+  if (command === 'hub') {
+    const { files, videos } = await hub();
+    const query = (input ?? '').toLowerCase();
+    const shown = videos.filter((video) => video.listed && video.title.toLowerCase().includes(query));
+    if (shown.length === 0) console.log(query ? `Nothing found for "${input}"` : 'The hub is empty');
+    for (const video of shown) console.log(`hub:${video.slug.padEnd(32)} ${clock(video.duration).padStart(8)}  ${video.title}  [${video.license}]`);
+    if (shown.length > 0) console.log(`
+glyphcast play hub:<name>   files from ${files}`);
+    return;
+  }
   if (values.help || !command || !input) {
     console.log(USAGE);
     process.exitCode = command ? 1 : 0;
     return;
   }
   if (command === 'play') {
+    if (input?.startsWith('hub:')) {
+      const name = input.slice(4);
+      const { files, videos } = await hub();
+      const video = videos.find((item) => item.slug === name || item.id === name);
+      const id = video?.id ?? name;
+      if (!/^[\w-]{11}$/.test(id)) throw new Error(`No video "${name}" in the hub; see glyphcast hub`);
+      if (video) console.log(video.title);
+      await playInTerminal(`${files}/v/${id}.gcast`, { ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
+      return;
+    }
     await playInTerminal(input, { ...(values.cols ? { cols: Number(values.cols) } : {}), ...(values.fps ? { fps: Number(values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
     return;
   }
@@ -80,6 +102,22 @@ const main = async (): Promise<void> => {
   if (command !== 'encode') throw new Error(`Unknown command "${command}"`);
   if (values.out && inputs.length > 1) throw new Error('--out works with one video; several are saved next to the current folder by name');
   for (const video of inputs) await encode(video, values.out ?? `${basename(video, extname(video))}.gcast`, values);
+};
+
+interface HubVideo {
+  readonly id: string;
+  readonly slug: string;
+  readonly title: string;
+  readonly license: string;
+  readonly listed: boolean;
+  readonly duration: number;
+}
+
+const hub = async (): Promise<{ readonly files: string; readonly videos: HubVideo[] }> => {
+  const base = (process.env['GLYPHCAST_HUB'] ?? 'https://mrprolopstar.github.io/gcast-hub').replace(/\/$/, '');
+  const [config, videos] = await Promise.all([fetch(`${base}/hub.json`), fetch(`${base}/videos.json`)]);
+  if (!config.ok || !videos.ok) throw new Error(`The hub at ${base} does not answer`);
+  return { files: ((await config.json()) as { files: string }).files.replace(/\/$/, ''), videos: (await videos.json()) as HubVideo[] };
 };
 
 const clock = (seconds: number): string => {

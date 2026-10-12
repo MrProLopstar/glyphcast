@@ -210,35 +210,56 @@ interface Library {
   readonly close: () => void;
 }
 
+const indexed = async (read: (offset: number, length: number) => Promise<Uint8Array>, size: number, close: () => void): Promise<Library | null> => {
+  const info = readHeader(await read(0, HEADER_SIZE));
+  const length = indexLength(await read(Math.max(0, size - INDEX_TRAILER), Math.min(size, INDEX_TRAILER)));
+  if (!length) return null;
+  const entries = readIndex(await read(size - length, length));
+  const head = await read(HEADER_SIZE, (entries[0]?.offset ?? HEADER_SIZE) - HEADER_SIZE);
+  const sound = new StreamReader(info).push(head).filter((chunk) => chunk.frames === 0);
+  const pieces = entries.map((entry) => ({
+    start: entry.start,
+    frames: entry.frames,
+    load: async () => {
+      const top = await read(entry.offset, 6);
+      return read(entry.offset + 6, new DataView(top.buffer, top.byteOffset).getUint32(0, true));
+    },
+  }));
+  return { info, pieces, sound: sound.length ? concat(sound.map((chunk) => chunk.data)) : null, complete: () => true, close };
+};
+
 const fromFile = async (path: string): Promise<Library> => {
   const file = await open(path, 'r');
   const size = (await file.stat()).size;
-  const read = async (offset: number, length: number): Promise<Uint8Array> => {
-    const bytes = new Uint8Array(length);
-    await file.read(bytes, 0, length, offset);
-    return bytes;
-  };
-  const info = readHeader(await read(0, HEADER_SIZE));
-  const length = indexLength(await read(Math.max(0, size - INDEX_TRAILER), Math.min(size, INDEX_TRAILER)));
-  if (length) {
-    const entries = readIndex(await read(size - length, length));
-    const head = await read(HEADER_SIZE, (entries[0]?.offset ?? HEADER_SIZE) - HEADER_SIZE);
-    const sound = new StreamReader(info).push(head).filter((chunk) => chunk.frames === 0);
-    const pieces = entries.map((entry) => ({
-      start: entry.start,
-      frames: entry.frames,
-      load: async () => {
-        const top = await read(entry.offset, 4);
-        const bytes = new DataView(top.buffer).getUint32(0, true);
-        return read(entry.offset + 6, bytes);
-      },
-    }));
-    return { info, pieces, sound: sound.length ? concat(sound.map((chunk) => chunk.data)) : null, complete: () => true, close: () => void file.close() };
-  }
+  const library = await indexed(
+    async (offset, length) => {
+      const bytes = new Uint8Array(length);
+      await file.read(bytes, 0, length, offset);
+      return bytes;
+    },
+    size,
+    () => void file.close(),
+  );
+  if (library) return library;
   await file.close();
   const reader = new StreamReader();
   const chunks = reader.push(new Uint8Array(await readFile(path)));
-  return fromChunks(reader.info ?? info, chunks, () => true);
+  if (!reader.info) throw new GlyphcastError('Not a .gcast file');
+  return fromChunks(reader.info, chunks, () => true);
+};
+
+const fromRanges = async (url: string): Promise<Library | null> => {
+  const probe = await fetch(url, { headers: { range: `bytes=-${INDEX_TRAILER}` } });
+  const size = Number(/\/(\d+)$/.exec(probe.headers.get('content-range') ?? '')?.[1] ?? 0);
+  if (probe.status !== 206 || !size) return null;
+  await probe.arrayBuffer();
+  const read = async (offset: number, length: number): Promise<Uint8Array> => {
+    if (length <= 0) return new Uint8Array(0);
+    const response = await fetch(url, { headers: { range: `bytes=${offset}-${offset + length - 1}` } });
+    if (response.status !== 206) throw new GlyphcastError(`Cannot read ${url}: HTTP ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  };
+  return indexed(read, size, () => undefined);
 };
 
 const concat = (parts: readonly Uint8Array[]): Uint8Array => {
@@ -314,7 +335,7 @@ const sounds = (library: Library, ffplay: string): { readonly start: (at: number
 };
 
 const playStream = async (input: string, options: TerminalOptions, output: NodeJS.WriteStream): Promise<void> => {
-  const library = /^https?:\/\//.test(input) ? await fromUrl(input) : await fromFile(input);
+  const library = /^https?:\/\//.test(input) ? ((await fromRanges(input)) ?? (await fromUrl(input))) : await fromFile(input);
   const { info } = library;
   const total = (): number => (info.frameCount || library.pieces.reduce((sum, piece) => Math.max(sum, piece.start + piece.frames), 0)) / info.fps;
   const audio = sounds(library, options.ffplay ?? 'ffplay');
@@ -415,6 +436,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   audio.start(0);
   try {
     let shown = -1;
+    let shownStatus = '';
     let drawnWidth = view.width;
     let drawnHeight = view.height;
     while (!quit) {
@@ -441,7 +463,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
             fill: FILLS[look.fill] ?? 0,
             cellRatio,
           });
-          output.write(text.split('\n').map((line, row) => `\x1b[${top + row + 1};${left + 1}H${line}`).join(''));
+          if (!output.write(text.split('\n').map((line, row) => `\x1b[${top + row + 1};${left + 1}H${line}`).join(''))) await new Promise((resolve) => output.once('drain', resolve));
           shown = index;
           redraw = false;
         }
@@ -460,7 +482,11 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       barStart = head.length + 1;
       barWidth = bar;
       const status = `${head}${'█'.repeat(filled)}${'░'.repeat(bar - filled)}  ${settings}${hints}`;
-      output.write(`\x1b[${view.height + 1};1H\x1b[0m\x1b[2K${status.slice(0, view.width - 1)}`);
+      const line = status.slice(0, view.width - 1);
+      if (line !== shownStatus || redraw) {
+        shownStatus = line;
+        if (!output.write(`\x1b[${view.height + 1};1H\x1b[0m\x1b[2K${line}`)) await new Promise((resolve) => output.once('drain', resolve));
+      }
       if (playing && time >= total() && library.complete()) break;
       await new Promise((resolve) => setTimeout(resolve, Math.max(5, 1000 / info.fps / 2)));
     }

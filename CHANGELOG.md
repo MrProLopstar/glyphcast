@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4
+
+- `glyphcast hub [search]` lists the gcast hub, `glyphcast play hub:<name>` plays from it
+- Remote `.gcast` files with an index are read by range requests, so long films start and seek at once
+- Terminal player no longer lags after a long pause: it waits for the console and redraws the status only when it changes
+
 ## 0.5.3
 
 - Terminal player: click the progress bar to seek, click the picture to pause; keys work in the Russian layout too
