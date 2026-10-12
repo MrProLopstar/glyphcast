@@ -195,7 +195,18 @@ const steady = (previous: Uint8ClampedArray | null, pixels: Uint8ClampedArray): 
   return out;
 };
 
-const MODES: readonly [string, TerminalMode][] = [['Брайль', 'braille'], ['символы', 'glyphs'], ['полублоки', 'blocks']];
+const MODES: readonly [string, TerminalMode][] = [['braille', 'braille'], ['glyphs', 'glyphs'], ['half blocks', 'blocks']];
+const GLYPH_NAMES = ['classic', 'blocks', 'dense', 'dots', 'binary', 'katakana'];
+const TINT_NAMES = ['video colors', 'matrix', 'amber', 'neon', 'mono'];
+const BOOSTS = [1.3, 1.6, 2, 0.7, 1];
+
+interface Segment {
+  readonly text: string;
+  readonly act?: () => void;
+  readonly on?: boolean;
+}
+
+const button = (segment: Segment): string => `\x1b[48;2;34;39;46m${segment.on === false ? '\x1b[38;2;110;118;129m' : segment.on ? '\x1b[38;2;240;160;75m' : '\x1b[38;2;232;236;239m'} ${segment.text} \x1b[0m`;
 const FILLS = [0.25, 0.5, 0];
 const RUSSIAN: Readonly<Record<string, string>> = { ч: 'x', м: 'v', й: 'q', л: 'k', о: 'j', д: 'l', ь: 'm', п: 'g', с: 'c', х: '[', ъ: ']', и: 'b' };
 
@@ -422,7 +433,7 @@ const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
 
 const playStream = async (input: string, options: TerminalOptions, output: NodeJS.WriteStream): Promise<void> => {
   let turn = 0;
-  const loading = output.isTTY ? setInterval(() => output.write(`\r\x1b[2K${SPINNER[(turn += 1) % SPINNER.length]} glyphcast: загрузка ${options.title ?? input}`), 80) : null;
+  const loading = output.isTTY ? setInterval(() => output.write(`\r\x1b[2K${SPINNER[(turn += 1) % SPINNER.length]} glyphcast: loading ${options.title ?? input}`), 80) : null;
   const library = await (/^https?:\/\//.test(input) ? fromRanges(input).then((found) => found ?? fromUrl(input)) : fromFile(input)).finally(() => {
     if (loading) clearInterval(loading);
     if (output.isTTY) output.write('\r\x1b[2K');
@@ -431,7 +442,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   const total = (): number => (info.frameCount || library.pieces.reduce((sum, piece) => Math.max(sum, piece.start + piece.frames), 0)) / info.fps;
   const audio = sounds(library.audio, total, options.ffplay ?? 'ffplay');
   const view = screen(output);
-  output.write(`\x1b[${Math.max(1, Math.floor(view.height / 2))};${Math.max(1, Math.floor(view.width / 2) - 6)}H${SPINNER[0]} загрузка`);
+  output.write(`\x1b[${Math.max(1, Math.floor(view.height / 2))};${Math.max(1, Math.floor(view.width / 2) - 6)}H${SPINNER[0]} loading`);
   if (output.isTTY) {
     const fitted = fitTerminal(info.cols, info.rows, 1000, 1000);
     const scale = Math.min((output.columns || 120) / fitted.width, ((output.rows || 40) - 1) / fitted.height);
@@ -494,8 +505,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     return pending;
   };
   let cellRatio = 2.25;
-  let barStart = 0;
-  let barWidth = 0;
+  let controls: { readonly from: number; readonly to: number; readonly act: (column: number) => void }[] = [];
   const keys = (data: Buffer): void => {
     const text = data.toString();
     const size = /\x1b\[6;(\d+);(\d+)t/.exec(text);
@@ -510,7 +520,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     if (click) {
       const [, button, column, row] = click.map(Number);
       if (button !== 0) return;
-      if (row === view.height + 1 && column !== undefined && column >= barStart && column < barStart + barWidth) jump(((column - barStart + 0.5) / barWidth) * total());
+      const hit = row === view.height + 1 && column !== undefined ? controls.find((control) => column >= control.from && column < control.to) : undefined;
+      if (hit) hit.act(column ?? 0);
       else if (row !== undefined && row <= view.height) toggle();
       redraw = true;
       return;
@@ -614,17 +625,45 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         drawnHeight = view.height;
         redraw = true;
       }
-      const settings = `${MODES[look.mode]?.[0]}, ${(GLYPH_SETS[look.glyphs]?.[0] ?? '').toLowerCase()}, ${(TINTS[look.tint]?.[0] ?? '').toLowerCase()}, нас. ${look.boost.toFixed(1)}, фон ${FILLS[look.fill]}${look.sharp ? ', ×2' : ''}${look.smooth ? ', плавно' : ''}`;
-      const hints = interactive ? '  пробел ←→ m g c [ ] b x v q' : '';
-      const span = pictureWidth >= 72 ? pictureWidth : view.width;
-      const offset = pictureWidth >= 72 ? pictureLeft : 0;
-      const bar = Math.max(8, span - 24 - settings.length - hints.length);
+      const span = pictureWidth >= 60 ? pictureWidth : view.width;
+      const offset = pictureWidth >= 60 ? pictureLeft : 0;
+      const pause: Segment = { text: playing ? '▶' : '‖', act: toggle };
+      const time$ = ` ${clock(time)} / ${clock(total())} `;
+      const options$: Segment[] = [
+        { text: MODES[look.mode]?.[0] ?? '', act: () => (look.mode = (look.mode + 1) % MODES.length) },
+        { text: GLYPH_NAMES[look.glyphs] ?? '', act: () => (look.glyphs = (look.glyphs + 1) % GLYPH_SETS.length) },
+        { text: TINT_NAMES[look.tint] ?? '', act: () => (look.tint = (look.tint + 1) % TINTS.length) },
+        { text: `sat ${look.boost.toFixed(1)}`, act: () => (look.boost = BOOSTS[(BOOSTS.indexOf(look.boost) + 1) % BOOSTS.length] ?? 1.3) },
+        { text: `bg ${FILLS[look.fill]}`, act: () => (look.fill = (look.fill + 1) % FILLS.length) },
+        { text: '2x', on: look.sharp, act: () => (look.sharp = !look.sharp) },
+        { text: 'smooth', on: look.smooth, act: () => (look.smooth = !look.smooth) },
+        { text: '✕', act: () => (quit = true) },
+      ];
+      const widthOf = (segments: readonly Segment[]): number => segments.reduce((sum, segment) => sum + segment.text.length + 3, 0);
+      while (options$.length > 1 && span - 3 - time$.length - widthOf(options$) < 10) options$.splice(options$.length - 2, 1);
+      const bar = Math.max(4, span - 3 - time$.length - widthOf(options$) - 1);
       const filled = Math.round(share * bar);
-      const head = `${playing ? '▶' : '❚❚'} ${clock(time)} / ${clock(total())} `;
-      barStart = offset + head.length + 1;
-      barWidth = bar;
-      const status = `${head}${'█'.repeat(filled)}${'░'.repeat(bar - filled)}  ${settings}${hints}`;
-      const line = status.slice(0, span);
+      const map: typeof controls = [];
+      let column = offset + 1;
+      const place = (width: number, act?: (at: number) => void): void => {
+        if (act) map.push({ from: column, to: column + width, act });
+        column += width;
+      };
+      let status = button(pause);
+      place(3, () => toggle());
+      status += time$;
+      place(time$.length);
+      const barFrom = column;
+      status += `\x1b[38;2;240;160;75m${'━'.repeat(filled)}\x1b[38;2;60;66;76m${'━'.repeat(bar - filled)}\x1b[0m `;
+      place(bar, (at) => jump(((at - barFrom + 0.5) / bar) * total()));
+      place(1);
+      for (const segment of options$) {
+        status += `${button(segment)} `;
+        place(segment.text.length + 2, segment.act);
+        place(1);
+      }
+      controls = map;
+      const line = status;
       if (line !== shownStatus || redraw) {
         shownStatus = line;
         if (!output.write(`\x1b[${view.height + 1};1H\x1b[0m\x1b[2K\x1b[${view.height + 1};${offset + 1}H${line}`)) await new Promise((resolve) => output.once('drain', resolve));

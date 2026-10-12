@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0
+
+- Terminal player speaks English and its status bar is a row of buttons: click the mode, glyph set, colors, saturation, background, 2x, smooth or ✕ to change them, click the bar to seek; the bar spans the picture width
+- `glyphcast serve` pauses ffmpeg while a client reads slowly, so a long film no longer piles up in server memory
+- Served files answer 404 for missing names, 416 for ranges past the end, and HEAD requests; read errors close the response instead of crashing
+- `serve()` rejects when the port is busy instead of hanging; old YouTube lookups are dropped from the cache
+- `glyphcast serve --host` binds another interface; `--cols`, `--fps`, `--chunk`, `--port` refuse values that are not positive numbers
+
 ## 0.11.0
 
 - Terminal subtitles: `glyphcast play --subtitles file.vtt`, and hub videos with subtitles show them
