@@ -674,7 +674,7 @@ const encodeMasks = (shape: Layout, modes: Uint8Array, reference: Uint8Array, ma
 
 /**
  * Dot patterns for a detail stream from a frame at twice the width and four times the height of the grid, RGB or
- * RGBA: one byte per cell, bit `y * 2 + x` set where that sub-pixel is clearly brighter than the cell's average.
+ * RGBA: one byte per cell, bit `y * 2 + x` set where that sub-pixel is clearly brighter than the cell's average. Such cells carry the color of their bright dots.
  * Flat cells get 0, so players fall back to their usual drawing there.
  */
 export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number, rows: number, stride = 3): { readonly cells: Uint8ClampedArray; readonly masks: Uint8Array } => {
@@ -707,10 +707,24 @@ export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number
       cells[cell * 4 + 1] = g / 8;
       cells[cell * 4 + 2] = b / 8;
       cells[cell * 4 + 3] = 255;
-      if (high - low < 80) continue;
+      if (high - low < 48) continue;
       const middle = (high + low) / 2;
       let mask = 0;
-      for (let dot = 0; dot < 8; dot += 1) if ((lumas[dot] ?? 0) > middle) mask |= 1 << dot;
+      let lit = 0;
+      r = g = b = 0;
+      for (let dot = 0; dot < 8; dot += 1) {
+        if ((lumas[dot] ?? 0) <= middle) continue;
+        mask |= 1 << dot;
+        lit += 1;
+        const at = ((row * 4 + (dot >> 1)) * width + col * 2 + (dot & 1)) * stride;
+        r += pixels[at] ?? 0;
+        g += pixels[at + 1] ?? 0;
+        b += pixels[at + 2] ?? 0;
+      }
+      // a patterned cell is drawn as its lit dots, so it takes their color: thin bright lines stay bright
+      cells[cell * 4] = r / lit;
+      cells[cell * 4 + 1] = g / lit;
+      cells[cell * 4 + 2] = b / lit;
       masks[cell] = mask;
     }
   }

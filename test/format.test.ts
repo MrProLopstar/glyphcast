@@ -254,3 +254,11 @@ describe('detail', () => {
     expect(() => new Encoder({ cols, rows, fps: 10, chunkFrames: 10, detail: true }).add(frame(0))).toThrow(GlyphcastError);
   });
 });
+
+it('keeps thin bright lines bright in detail cells', () => {
+  const pixels = new Uint8Array(2 * 4 * 3);
+  pixels.fill(255, 0, 6);
+  const { cells, masks } = detailMasks(pixels, 1, 1);
+  expect(masks[0]).toBe(0b11);
+  expect(cells[0]).toBe(255);
+});

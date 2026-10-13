@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.6
+
+- `--detail`: patterned cells take the color of their bright dots and fainter lines get patterns, so thin titles stay readable (re-encode to use it)
+
 ## 0.19.5
 
 - On a slow connection the player waits with a loader when the downloaded part runs out, instead of skipping ahead; playback resumes with 5 s in reserve
