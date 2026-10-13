@@ -93,7 +93,7 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
   </header>
 
 
-  <glyph-player id="player" src="https://glc-api.1lop.ru/v/XcKVwaaFqAM.gcast" poster="./onepiece.jpg" mode="braille" cols="160"></glyph-player>
+  <glyph-player id="player" src="https://gcast-hub.aniclap.workers.dev/v/XcKVwaaFqAM.gcast" poster="./onepiece.jpg" mode="braille" cols="160"></glyph-player>
 
   <section class="sources">
     <div class="row">
@@ -176,7 +176,7 @@ $('file').addEventListener('change', async (event) => {
 
 $('sample').addEventListener('click', () => {
   clearSource();
-  player.setAttribute('src', 'https://glc-api.1lop.ru/v/XcKVwaaFqAM.gcast');
+  player.setAttribute('src', 'https://gcast-hub.aniclap.workers.dev/v/XcKVwaaFqAM.gcast');
 });
 
 $('camera').addEventListener('click', async () => {
