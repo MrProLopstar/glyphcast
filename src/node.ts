@@ -33,7 +33,19 @@ export interface EncodeVideoOptions {
   readonly crop?: boolean;
   /** Called as frames are encoded with the seconds done and the total, for progress output. */
   readonly onProgress?: (done: number, total: number) => void;
+  /** Start of the piece to encode, in seconds. Default 0. */
+  readonly start?: number;
+  /** Length of the piece to encode, in seconds. Default to the end. */
+  readonly duration?: number;
 }
+
+/** ffmpeg input arguments for a piece of the file: seek before the input, cut after it. */
+const piece = (input: string, options: { readonly start?: number; readonly duration?: number }): string[] => [
+  ...(options.start ? ['-ss', String(options.start)] : []),
+  '-i',
+  input,
+  ...(options.duration ? ['-t', String(options.duration)] : []),
+];
 
 const run = (command: string, args: readonly string[], onData?: (chunk: Buffer) => void): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -103,7 +115,7 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const cols = options.cols ?? 160;
   const fps = options.fps ?? 24;
   const probed = await probe(input, options.ffprobe);
-  const { duration } = probed;
+  const duration = Math.max(0, Math.min(options.duration ?? Infinity, probed.duration - (options.start ?? 0)));
   const area = options.crop === false ? { width: probed.width, height: probed.height, x: 0, y: 0 } : await detectBars(input, probed.width, probed.height, options.ffmpeg);
   const { width, height } = area;
   const cropped = area.width !== probed.width || area.height !== probed.height ? `crop=${area.width}:${area.height}:${area.x}:${area.y},` : '';
@@ -111,13 +123,13 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   let frames = 0;
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), detail: options.detail ?? false, compress: deflate9, ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
   if (options.subtitles !== false) {
-    const text = await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-i', input, '-map', '0:s:0', '-f', 'webvtt', 'pipe:1']).catch(() => '');
+    const text = await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', ...piece(input, options), '-map', '0:s:0', '-f', 'webvtt', 'pipe:1']).catch(() => '');
     if (text.includes('-->')) encoder.addSubtitles(text);
   }
   if (options.embedAudio && (await hasAudio(input, options.ffprobe))) {
     const temp = mkdtempSync(join(tmpdir(), 'glyphcast-'));
     try {
-      await extractAudio(input, join(temp, 'audio.opus'), options.ffmpeg ? { ffmpeg: options.ffmpeg } : {});
+      await extractAudio(input, join(temp, 'audio.opus'), options);
       encoder.addAudio(readFileSync(join(temp, 'audio.opus')));
     } finally {
       rmSync(temp, { recursive: true, force: true });
@@ -127,7 +139,7 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const frameSize = cols * rows * 3 * (detail ? 8 : 1);
   const scale = detail ? `${cols * 2}:${rows * 4}` : `${cols}:${rows}`;
   let pending: Buffer = Buffer.alloc(0);
-  await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-i', input, '-an', '-vf', `${cropped}fps=${fps},scale=${scale}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], (chunk) => {
+  await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', ...piece(input, options), '-an', '-vf', `${cropped}fps=${fps},scale=${scale}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], (chunk) => {
     pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
     while (pending.length >= frameSize) {
       if (detail) {
@@ -164,8 +176,8 @@ export const extractPoster = async (input: string, output: string, options: { re
 };
 
 /** Extracts the audio track for a stream: AAC for `.m4a`, which every browser plays, or Opus for `.opus` and `.ogg`. */
-export const extractAudio = (input: string, output: string, options: { readonly bitrate?: string; readonly ffmpeg?: string } = {}): Promise<string> =>
-  run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', '-i', input, '-vn', ...(/\.(m4a|aac|mp4)$/i.test(output) ? ['-c:a', 'aac', '-movflags', '+faststart'] : ['-c:a', 'libopus']), '-ac', '2', '-b:a', options.bitrate ?? '40k', output]);
+export const extractAudio = (input: string, output: string, options: { readonly bitrate?: string; readonly ffmpeg?: string; readonly start?: number; readonly duration?: number } = {}): Promise<string> =>
+  run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-y', ...piece(input, options), '-vn', ...(/\.(m4a|aac|mp4)$/i.test(output) ? ['-c:a', 'aac', '-movflags', '+faststart'] : ['-c:a', 'libopus']), '-ac', '2', '-b:a', options.bitrate ?? '40k', output]);
 
 export { decodeChunk, Encoder, GlyphcastError, readHeader, StreamReader } from './format.js';
 export { serve, type ServeOptions, type VideoInfo } from './serve.js';

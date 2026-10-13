@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -8,32 +8,108 @@ import { encodeMicroVideo, encodeVideo, extractAudio, extractPoster } from './no
 import { serve } from './serve.js';
 import { playInTerminal } from './terminal.js';
 
-const USAGE = `glyphcast: video as glyphs
+const HELP: Record<string, string> = {
+  encode: `glyphcast encode <video...> [options]   (short: glc encode)
 
-  glyphcast encode <video...> [--out file.gcast] [--cols 160 | --cols 120,180] [--fps 24] [--threshold 3] [--embed | --audio file.m4a] [--poster] [--chunk 2]
-      --embed puts Opus sound inside the .gcast, --audio writes it to a separate file,
-      --poster saves a frame as <name>.jpg for the player; several videos are encoded one by one;
-      black bars that stay black through the whole video are cut, --no-crop keeps them;
-      --detail stores a 2x4 dot pattern per cell from the source, for sharp text and lines in braille
-  glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
-  glyphcast play <file.gcast | stream URL | video | hub:name | live:room> [--cols width] [--subtitles file.vtt]
-      plays in the terminal; for .gcast: Space pause, ←/→ 5 s, J/L 10 s, 0-9 jump, M render mode, G glyphs,
-      C colors, [ ] saturation, B background, Q quit; sound via ffplay
-  glyphcast hub [search]
-      lists open videos in the gcast hub; play them with glyphcast play hub:<name>
-  glyphcast publish <file.gcast> --title "Name" [--license CC-BY] [--image poster.jpg] [--subtitles file.vtt] [--variant other-grid.gcast]
-      uploads to the gcast hub with the key from GLYPHCAST_HUB_KEY; licenses: CC0, CC-BY, CC-BY-SA,
-      CC-BY-NC, public-domain list the video, own keeps it reachable by link only
-  glyphcast info <file.gcast>
-  glyphcast serve [--port 8787] [--host 127.0.0.1] [--dir videos] [--no-youtube] [--yt-dlp path] [--ffmpeg path]
-      live .gcast streams from YouTube links and videos in --dir, for <glyph-player>
+  Turns a video into a .gcast file: a grid of colored cells that players draw as glyphs.
+  Needs ffmpeg and ffprobe in PATH.
 
-encode and micro need ffmpeg and ffprobe, serve needs yt-dlp and ffmpeg.`;
+  Picture
+    --cols 160            grid width in cells; height follows the video. Several values, like
+                          --cols 120,180, write <name>-120.gcast and <name>-180.gcast for quality switching
+    --fps 24              frames per second
+    --detail              stores a 2x4 dot pattern for cells with sharp edges: readable titles and
+                          thin lines in braille, about 15% larger
+    --threshold 3         how much a cell may change before it is sent again; higher is smaller and blockier
+    --no-crop             keep black bars (by default bars that stay black the whole video are cut)
+
+  Sound and extras
+    --embed               put the sound inside the .gcast (Opus 40 kbit/s)
+    --audio file.m4a      write the sound to a separate file instead
+    --poster              save a frame as <name>.jpg for the player
+
+  Piece of the video
+    --start 1:02          start here (seconds, m:ss or h:mm:ss)
+    --duration 30         encode only this long; handy for trying settings on a minute of a film
+
+  Output
+    --out file.gcast      file name (one video, one --cols value); by default <name>.gcast here
+    --chunk 2             seconds per chunk; each chunk is a seek point
+
+  Examples
+    glc encode movie.mp4 --cols 180 --detail --embed --poster
+    glc encode movie.mp4 --start 1:00 --duration 20 --detail --out test.gcast
+    glc encode movie.mp4 --cols 120,180 --embed`,
+  play: `glyphcast play <source> [options]
+
+  Plays in the terminal with 24-bit color. Sources:
+    file.gcast            a local file (large files with an index are read chunk by chunk)
+    https://…/file.gcast  a file on a server, loaded with range requests
+    video.mp4             any video, converted on the fly with ffmpeg
+    hub:name              a video from the gcast hub (see glc hub)
+    live:room             a live stream from the hub
+
+  Options
+    --cols 160            grid width for videos converted on the fly
+    --subtitles file.vtt  show subtitles
+    --ffmpeg path         ffmpeg to use
+
+  Keys
+    Space pause   ←/→ 5 s   J/L 10 s   0-9 jump to 0%-90%   M render mode   G glyphs
+    C colors   [ ] saturation   B background   Q quit; the status bar is clickable
+  Sound plays through ffplay when it is installed.`,
+  publish: `glyphcast publish <file.gcast> --title "Name" [options]
+
+  Uploads to the gcast hub. Files over 95 MB go in parts; if the upload breaks, run the same
+  command again and it continues from the last finished part.
+
+  Options
+    --title "Name"        title on the hub (required)
+    --license own         own (default, reachable by link only), CC0, CC-BY, CC-BY-SA, CC-BY-NC,
+                          public-domain; open licenses can be listed on the hub after review
+    --image poster.jpg    poster
+    --subtitles file.vtt  subtitles
+    --variant file.gcast  the same video in another grid width, for the quality menu; repeatable
+
+  GLYPHCAST_HUB_KEY gives admin rights (listing right away); without it uploads go to review.`,
+  hub: `glyphcast hub [search]
+
+  Lists open videos in the gcast hub. Play one with glc play hub:<name>.`,
+  info: `glyphcast info <file.gcast>
+
+  Grid size, frame rate, length, chunks and embedded sound of a file.`,
+  micro: `glyphcast micro <video> [--out file.mp4] [--cols 160] [--fps 24]
+
+  Writes a tiny H.264 video at the grid size, for GlyphVideo with prescaled: true.`,
+  serve: `glyphcast serve [--port 8787] [--host 127.0.0.1] [--dir videos] [--no-youtube] [--yt-dlp path] [--ffmpeg path]
+
+  Serves live .gcast streams from YouTube links and videos in --dir for <glyph-player>.
+  Needs yt-dlp and ffmpeg.`,
+};
+
+const USAGE = `glyphcast: video as glyphs   (glc is the short name)
+
+  glc encode <video...>        make a .gcast from a video
+  glc play <source>            play in the terminal: file, URL, video, hub:name, live:room
+  glc hub [search]             list videos in the gcast hub
+  glc publish <file.gcast>     upload to the hub
+  glc info <file.gcast>        describe a file
+  glc micro <video>            tiny H.264 for GlyphVideo
+  glc serve                    live streams for <glyph-player>
+
+  glc help <command> or glc <command> --help shows every option with examples.`;
 
 const number = (name: string, value: string): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`--${name} needs a positive number, got "${value}"`);
   return parsed;
+};
+
+/** Seconds from "90", "1:30" or "1:02:03". */
+const timeArg = (name: string, value: string): number => {
+  const parts = value.split(':').map(Number);
+  if (parts.length > 3 || parts.some((part) => !Number.isFinite(part) || part < 0)) throw new Error(`--${name} needs seconds, m:ss or h:mm:ss, got "${value}"`);
+  return parts.reduce((sum, part) => sum * 60 + part, 0);
 };
 
 const kb = (bytes: number): string => `${(bytes / 1024).toFixed(1)} KB`;
@@ -63,10 +139,17 @@ const main = async (): Promise<void> => {
       'no-youtube': { type: 'boolean' },
       'yt-dlp': { type: 'string' },
       ffmpeg: { type: 'string' },
+      start: { type: 'string' },
+      duration: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
     },
   });
   const [command, input] = positionals;
+  if (command === 'help' || (values.help && command)) {
+    const topic = command === 'help' ? input : command;
+    console.log((topic && HELP[topic]) ?? USAGE);
+    return;
+  }
   const inputs = positionals.slice(1);
   if (command === 'serve') {
     const port = values.port ? number('port', values.port) : 8787;
@@ -77,12 +160,13 @@ const main = async (): Promise<void> => {
   }
   if (command === 'publish') {
     const key = process.env['GLYPHCAST_HUB_KEY'];
-    if (!input || !values.title || !key) throw new Error('Usage: GLYPHCAST_HUB_KEY=<key> glyphcast publish <file.gcast> --title "Name" [--license CC-BY] [--image poster.jpg]');
+    if (!input || !values.title) throw new Error(HELP['publish']);
+    const auth: Record<string, string> = key ? { 'x-hub-key': key } : {};
     const { files } = await hub();
     const license = values.license ?? 'own';
     const query = new URLSearchParams({ title: values.title, license, listed: license === 'own' ? '0' : '1' });
     const send = async (url: string, path: string, type: string): Promise<Record<string, unknown>> => {
-      const response = await fetch(url, { method: 'POST', body: readFileSync(path), headers: { 'x-hub-key': key, 'content-type': type } });
+      const response = await fetch(url, { method: 'POST', body: readFileSync(path), headers: { ...auth, 'content-type': type } });
       const data = (await response.json()) as Record<string, unknown>;
       if (!response.ok) throw new Error(`The hub refused ${basename(path)}: ${String(data['error'] ?? response.status)}`);
       return data;
@@ -92,30 +176,53 @@ const main = async (): Promise<void> => {
     if (size <= 95 * 1048576) entry = await send(`${files}/upload?${query}`, input, 'application/octet-stream');
     else {
       const call = async (url: string, body?: Uint8Array<ArrayBuffer>): Promise<Record<string, unknown>> => {
-        const response = await fetch(url, { method: 'POST', headers: { 'x-hub-key': key, 'content-type': 'application/octet-stream' }, ...(body ? { body } : {}) });
-        const data = (await response.json()) as Record<string, unknown>;
-        if (!response.ok) throw new Error(`The hub refused ${basename(input)}: ${String(data['error'] ?? response.status)}`);
-        return data;
+        for (let attempt = 1; ; attempt += 1) {
+          try {
+            const response = await fetch(url, { method: 'POST', headers: { ...auth, 'content-type': 'application/octet-stream' }, ...(body ? { body } : {}) });
+            const data = (await response.json()) as Record<string, unknown>;
+            if (response.ok) return data;
+            if (response.status < 500 || attempt >= 5) throw new Error(`The hub refused ${basename(input)}: ${String(data['error'] ?? response.status)}`);
+          } catch (error) {
+            if (attempt >= 5 || (error instanceof Error && error.message.startsWith('The hub refused'))) throw error;
+          }
+          console.log(`${basename(input)}: connection problem, retry ${attempt} of 4 in ${attempt * 5} s`);
+          await new Promise((resolve) => setTimeout(resolve, attempt * 5000));
+        }
       };
-      const start = await call(`${files}/parts/start`);
-      const id = String(start['id']);
-      const part = Number(start['part']);
+      // progress lives next to the file, so running the same command again continues the upload
+      const saved = `${input}.upload.json`;
+      const previous = (() => {
+        try {
+          const data = JSON.parse(readFileSync(saved, 'utf8')) as { id: string; part: number; size: number; done: number[] };
+          return data.size === size ? data : null;
+        } catch {
+          return null;
+        }
+      })();
+      const started: { id: string; part: number; size: number; done: number[] } = previous ?? { ...(await call(`${files}/parts/start`).then((data) => ({ id: String(data['id']), part: Number(data['part']) }))), size, done: [] as number[] };
+      if (previous) console.log(`${basename(input)}: continuing an earlier upload, ${previous.done.length} parts already there`);
+      const { id, part } = started;
       const sizes: number[] = [];
       const file = await open(input, 'r');
       try {
         for (let offset = 0, index = 0; offset < size; offset += part, index += 1) {
-          const bytes = new Uint8Array(Math.min(part, size - offset));
-          await file.read(bytes, 0, bytes.length, offset);
-          await call(`${files}/parts/${id}/${index}`, bytes);
-          sizes.push(bytes.length);
-          process.stdout.write(`\r${basename(input)}: ${Math.round(((offset + bytes.length) / size) * 100)}% uploaded   `);
+          const length = Math.min(part, size - offset);
+          sizes.push(length);
+          if (!started.done.includes(index)) {
+            const bytes = new Uint8Array(length);
+            await file.read(bytes, 0, length, offset);
+            await call(`${files}/parts/${id}/${index}`, bytes);
+            started.done.push(index);
+            writeFileSync(saved, JSON.stringify(started));
+          }
+          console.log(`${basename(input)}: ${Math.round(((offset + length) / size) * 100)}% uploaded`);
         }
       } finally {
         await file.close();
       }
-      process.stdout.write('\n');
       query.set('sizes', sizes.join(','));
       entry = await call(`${files}/parts/${id}/finish?${query}`);
+      rmSync(saved, { force: true });
     }
     if (values.image) await send(`${files}/poster/${String(entry['id'])}`, values.image, 'image/jpeg');
     if (values.subtitles) await send(`${files}/subtitles/${String(entry['id'])}`, values.subtitles, 'text/vtt');
@@ -137,7 +244,7 @@ glyphcast play hub:<name>   files from ${files}`);
     return;
   }
   if (values.help || !command || !input) {
-    console.log(USAGE);
+    console.log(command && HELP[command] ? HELP[command] : USAGE);
     process.exitCode = command ? 1 : 0;
     return;
   }
@@ -217,15 +324,22 @@ const clock = (seconds: number): string => {
   return hours ? `${hours}:${rest}` : rest;
 };
 
-const encode = async (input: string, out: string, values: { readonly cols?: string; readonly fps?: string; readonly chunk?: string; readonly threshold?: string; readonly embed?: boolean; readonly 'no-crop'?: boolean; readonly detail?: boolean; readonly poster?: boolean; readonly audio?: string }): Promise<void> => {
+const encode = async (input: string, out: string, values: { readonly cols?: string; readonly fps?: string; readonly chunk?: string; readonly threshold?: string; readonly embed?: boolean; readonly 'no-crop'?: boolean; readonly detail?: boolean; readonly poster?: boolean; readonly audio?: string; readonly start?: string; readonly duration?: string }): Promise<void> => {
   const started = performance.now();
   const live = process.stdout.isTTY;
+  let reported = 0;
   const bytes = await encodeVideo(input, {
     onProgress: (done, total) => {
-      if (!live || !total) return;
+      if (!total) return;
       const share = Math.min(1, done / total);
       const elapsed = (performance.now() - started) / 1000;
-      process.stdout.write(`\r${basename(input)}: ${(share * 100).toFixed(1)}% (${clock(done)} / ${clock(total)}), ${(done / elapsed).toFixed(1)}× real time, about ${clock((elapsed / share) * (1 - share))} left   `);
+      const line = `${basename(input)}: ${(share * 100).toFixed(1)}% (${clock(done)} / ${clock(total)}), ${(done / elapsed).toFixed(1)}× real time, about ${clock((elapsed / share) * (1 - share))} left`;
+      if (live) process.stdout.write(`\r${line}   `);
+      else if (elapsed - reported >= 30) {
+        // logs and background jobs get a full line every 30 s instead of a redrawn one
+        reported = elapsed;
+        console.log(line);
+      }
     },
     ...(values.cols ? { cols: number('cols', values.cols) } : {}),
     ...(values.fps ? { fps: number('fps', values.fps) } : {}),
@@ -234,6 +348,8 @@ const encode = async (input: string, out: string, values: { readonly cols?: stri
     ...(values.embed ? { embedAudio: true } : {}),
     ...(values['no-crop'] ? { crop: false } : {}),
     ...(values.detail ? { detail: true } : {}),
+    ...(values.start ? { start: timeArg('start', values.start) } : {}),
+    ...(values.duration ? { duration: timeArg('duration', values.duration) } : {}),
   });
   if (live) process.stdout.write('\r\x1b[K');
   writeFileSync(out, bytes);
