@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.2
+
+- Short command `glc`, the same as `glyphcast`
+
 ## 0.19.1
 
 - Phones: dragging the seek bar no longer gets cancelled by page scrolling, the thumbnail and time sit above the bar and hide when the finger lifts

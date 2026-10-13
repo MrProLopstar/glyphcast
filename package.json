@@ -1,6 +1,6 @@
 {
   "name": "glyphcast",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "description": "Video as colored glyphs: a complete WebGL2 player with controls and PiP, and a glyph stream a server can send instead of video",
   "keywords": [
     "ascii",
@@ -51,7 +51,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "glyphcast": "dist/cli.js"
+    "glyphcast": "dist/cli.js",
+    "glc": "dist/cli.js"
   },
   "files": [
     "dist",
