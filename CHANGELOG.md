@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.0
+
+- Encoding embeds the first text subtitle track of the video (mkv, mp4); players in the browser and the terminal show it without a separate file. `Encoder.addSubtitles()` adds any WebVTT or SRT
+
 ## 0.16.0
 
 - `--detail` stores a 2×4 dot pattern per cell taken from the source; braille draws it exactly, so on-screen text and thin lines stay readable. Files grow by about 20–40%. `detailMasks()` builds the patterns. Players before 0.16 refuse such files

@@ -23,6 +23,8 @@ export interface EncodeVideoOptions {
   readonly embedAudio?: boolean;
   /** Store a 2×4 dot pattern per cell from the source, so text and thin lines stay sharp in braille. Default false. */
   readonly detail?: boolean;
+  /** Embed the first text subtitle track of the video, if it has one. Default true. */
+  readonly subtitles?: boolean;
   /** Cut black bars that stay black through the whole video. Default true. */
   readonly crop?: boolean;
   /** Called as frames are encoded with the seconds done and the total, for progress output. */
@@ -104,6 +106,10 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
   let frames = 0;
   const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), detail: options.detail ?? false, ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
+  if (options.subtitles !== false) {
+    const text = await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-i', input, '-map', '0:s:0', '-f', 'webvtt', 'pipe:1']).catch(() => '');
+    if (text.includes('-->')) encoder.addSubtitles(text);
+  }
   if (options.embedAudio && (await hasAudio(input, options.ffprobe))) {
     const temp = mkdtempSync(join(tmpdir(), 'glyphcast-'));
     try {

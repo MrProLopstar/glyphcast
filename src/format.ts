@@ -3,6 +3,7 @@ export const VERSION = 3;
 export const HEADER_SIZE = 20;
 const CHUNK_HEAD = 6;
 const INDEX_FRAMES = 0xffff;
+const SUBTITLE_FRAMES = 0xfffe;
 const INDEX_MAGIC = 0x58444947;
 /** Bytes at the end of a file that point to its chunk index. */
 export const INDEX_TRAILER = 8;
@@ -42,6 +43,8 @@ export interface Chunk {
   readonly frames: number;
   /** Compressed payload, or raw audio bytes, without the 6-byte chunk head. */
   readonly data: Uint8Array;
+  /** The chunk holds embedded WebVTT subtitles instead of frames or audio. */
+  readonly subtitles?: boolean;
 }
 
 export class GlyphcastError extends Error {
@@ -287,6 +290,11 @@ export class StreamReader {
         at += CHUNK_HEAD + size;
         continue;
       }
+      if (frames === SUBTITLE_FRAMES) {
+        chunks.push({ start: this.frames, frames: 0, subtitles: true, data: this.buffer.slice(at + CHUNK_HEAD, at + CHUNK_HEAD + size) });
+        at += CHUNK_HEAD + size;
+        continue;
+      }
       chunks.push({ start: this.frames, frames, data: this.buffer.slice(at + CHUNK_HEAD, at + CHUNK_HEAD + size) });
       this.frames += frames;
       at += CHUNK_HEAD + size;
@@ -317,6 +325,7 @@ export class Encoder {
   private queue: Promise<void> = Promise.resolve();
   private readonly finished: Uint8Array[] = [];
   private readonly lateAudio: Uint8Array[] = [];
+  private subtitles: Uint8Array | null = null;
   private masks: Uint8Array = new Uint8Array(0);
 
   constructor(options: EncodeOptions, private readonly onChunk?: (bytes: Uint8Array) => void) {
@@ -433,6 +442,14 @@ export class Encoder {
     if (this.inChunk === this.info.chunkFrames) this.flush();
   }
 
+  /**
+   * Embeds WebVTT or SRT subtitles. They go first in the file from `finish()`, before the sound, and players show them
+   * on their own. Live `onChunk` output does not get them.
+   */
+  addSubtitles(text: string): void {
+    this.subtitles = frameChunk({ start: 0, frames: SUBTITLE_FRAMES, data: new TextEncoder().encode(text) });
+  }
+
   private flush(): void {
     if (this.inChunk === 0) return;
     const raw = new Uint8Array(this.parts.reduce((sum, part) => sum + part.length, 0));
@@ -459,13 +476,13 @@ export class Encoder {
     this.flush();
     await this.queue;
     const header = writeHeader({ ...this.info, frameCount: this.frames });
-    const body = [...this.lateAudio, ...this.finished.slice(1)];
+    const body = [...(this.subtitles ? [this.subtitles] : []), ...this.lateAudio, ...this.finished.slice(1)];
     const entries: IndexEntry[] = [];
     let offset = HEADER_SIZE;
     let start = 0;
     for (const part of body) {
       const frames = (part[4] ?? 0) | ((part[5] ?? 0) << 8);
-      if (frames > 0) {
+      if (frames > 0 && frames < SUBTITLE_FRAMES) {
         entries.push({ offset, start, frames });
         start += frames;
       }

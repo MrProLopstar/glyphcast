@@ -260,7 +260,11 @@ export class GlyphPlayer extends EventTarget {
     await new Promise<void>((resolve, reject) => {
       const sound: Uint8Array[] = [];
       this.download(state, response, state.reader, state.segment, (chunks) => {
-        for (const chunk of chunks) if (chunk.frames === 0) sound.push(chunk.data);
+        for (const chunk of chunks) {
+          if (chunk.subtitles) {
+            if (!this.cues.length) void this.setCaptions(new TextDecoder().decode(chunk.data));
+          } else if (chunk.frames === 0) sound.push(chunk.data);
+        }
         if (sound.length > 0 && state.chunks.length > 0 && !this.mediaClock) {
           this.media.src = URL.createObjectURL(new Blob(sound as BlobPart[], { type: audioType(sound[0] ?? new Uint8Array()) }));
           this.mediaClock = true;

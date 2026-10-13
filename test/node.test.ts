@@ -53,6 +53,23 @@ describe.runIf(hasFfmpeg)('ffmpeg encoders', () => {
   });
 });
 
+describe.runIf(hasFfmpeg)('embedded subtitles', () => {
+  it('takes the text track of a video and puts it first, before the sound', async () => {
+    const { writeFileSync } = await import('node:fs');
+    const srt = join(dir, 'lines.srt');
+    writeFileSync(srt, '1\n00:00:00,200 --> 00:00:01,000\nHello from mkv\n');
+    const movie = join(dir, 'subs.mkv');
+    spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=10', '-f', 'lavfi', '-i', 'sine=frequency=440', '-i', srt, '-t', '1.5', '-map', '0:v', '-map', '1:a', '-map', '2:s', '-c:s', 'srt', movie]);
+    const bytes = await encodeVideo(movie, { cols: 32, fps: 5, embedAudio: true });
+    const chunks = new StreamReader().push(bytes);
+    expect(chunks[0]?.subtitles).toBe(true);
+    expect(new TextDecoder().decode(chunks[0]?.data)).toContain('Hello from mkv');
+    expect(chunks[1]?.frames).toBe(0);
+    expect(chunks[1]?.subtitles).toBeUndefined();
+    expect(chunks.filter((chunk) => chunk.frames > 0).reduce((sum, chunk) => sum + chunk.frames, 0)).toBe(readHeader(bytes).frameCount);
+  });
+});
+
 describe.runIf(hasFfmpeg)('black bars', () => {
   it('cuts bars that stay black through the whole video', async () => {
     const boxed = join(dir, 'boxed.mp4');

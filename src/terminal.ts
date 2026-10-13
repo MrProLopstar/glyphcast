@@ -234,6 +234,7 @@ interface Library {
   readonly info: StreamInfo;
   readonly pieces: Piece[];
   readonly audio: AudioSource | null;
+  readonly subtitles?: string | undefined;
   readonly complete: () => boolean;
   readonly close: () => void;
 }
@@ -243,14 +244,25 @@ const indexed = async (read: (offset: number, length: number) => Promise<Uint8Ar
   const length = indexLength(await read(Math.max(0, size - INDEX_TRAILER), Math.min(size, INDEX_TRAILER)));
   if (!length) return null;
   const entries = readIndex(await read(size - length, length));
-  const region = (entries[0]?.offset ?? HEADER_SIZE) - HEADER_SIZE;
+  let first = HEADER_SIZE;
+  let subtitles: string | undefined;
+  if ((entries[0]?.offset ?? HEADER_SIZE) - first > 6) {
+    const head = await read(first, 6);
+    const view = new DataView(head.buffer, head.byteOffset);
+    if (view.getUint16(4, true) === 0xfffe) {
+      const length = view.getUint32(0, true);
+      subtitles = new TextDecoder().decode(await read(first + 6, length));
+      first += 6 + length;
+    }
+  }
+  const region = (entries[0]?.offset ?? HEADER_SIZE) - first;
   let audio: AudioSource | null = null;
   if (region > 6) {
-    const top = await read(HEADER_SIZE, 6);
+    const top = await read(first, 6);
     const piece = new DataView(top.buffer, top.byteOffset).getUint32(0, true);
     const count = Math.ceil(region / (piece + 6));
     const total = region - count * 6;
-    const at = (position: number): number => HEADER_SIZE + Math.floor(position / piece) * (piece + 6) + 6 + (position % piece);
+    const at = (position: number): number => first + Math.floor(position / piece) * (piece + 6) + 6 + (position % piece);
     audio = {
       size: total,
       read: async (position, wanted) => {
@@ -277,7 +289,7 @@ const indexed = async (read: (offset: number, length: number) => Promise<Uint8Ar
       return read(entry.offset + 6, new DataView(top.buffer, top.byteOffset).getUint32(0, true));
     },
   }));
-  return { info, pieces, audio, complete: () => true, close };
+  return { info, pieces, audio, subtitles, complete: () => true, close };
 };
 
 const fromFile = async (path: string): Promise<Library> => {
@@ -335,10 +347,18 @@ const concat = (parts: readonly Uint8Array[]): Uint8Array => {
 };
 
 const fromChunks = (info: StreamInfo, chunks: Chunk[], complete: () => boolean): Library => {
-  const parts = chunks.filter((chunk) => chunk.frames === 0).map((chunk) => chunk.data);
+  const parts = chunks.filter((chunk) => chunk.frames === 0 && !chunk.subtitles).map((chunk) => chunk.data);
   const sound = concat(parts);
   const pieces = chunks.filter((chunk) => chunk.frames > 0).map((chunk) => ({ start: chunk.start, frames: chunk.frames, load: () => Promise.resolve(chunk.data) }));
-  return { info, pieces, audio: parts.length ? { size: sound.length, read: (position, length) => Promise.resolve(sound.subarray(position, position + length)) } : null, complete, close: () => undefined };
+  const subtitles = chunks.find((chunk) => chunk.subtitles);
+  return {
+    info,
+    pieces,
+    audio: parts.length ? { size: sound.length, read: (position, length) => Promise.resolve(sound.subarray(position, position + length)) } : null,
+    subtitles: subtitles ? new TextDecoder().decode(subtitles.data) : undefined,
+    complete,
+    close: () => undefined,
+  };
 };
 
 const fromUrl = async (url: string): Promise<Library> => {
@@ -471,7 +491,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   };
   let previous: Uint8ClampedArray | null = null;
   let redraw = true;
-  const cues = options.subtitles ? parseCaptions(options.subtitles) : [];
+  const captions = options.subtitles ?? library.subtitles;
+  const cues = captions ? parseCaptions(captions) : [];
   let caption: string | null = null;
   const input$ = process.stdin;
   let base = 0;

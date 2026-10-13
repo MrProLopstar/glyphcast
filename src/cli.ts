@@ -162,7 +162,7 @@ glyphcast play hub:<name>   files from ${files}`);
     const info = reader.info;
     if (!info) throw new Error('Not a .gcast file');
     const frames = chunks.reduce((sum, chunk) => sum + chunk.frames, 0);
-    const sound = chunks.filter((chunk) => chunk.frames === 0).reduce((sum, chunk) => sum + chunk.data.length, 0);
+    const sound = chunks.filter((chunk) => chunk.frames === 0 && !chunk.subtitles).reduce((sum, chunk) => sum + chunk.data.length, 0);
     console.log(`${info.cols}×${info.rows} glyphs, ${info.fps} fps, ${frames} frames (${(frames / info.fps).toFixed(1)} s), ${chunks.length} chunks, ${kb(statSync(input).size)}${sound ? `, audio ${kb(sound)} inside` : ''}`);
     return;
   }
