@@ -1,0 +1,20 @@
+{
+  "name": "glyphcast-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build && vite build --mode converter && node -e \"require('fs').renameSync('../../gcast-converter/docs/converter.html','../../gcast-converter/docs/index.html')\""
+  },
+  "dependencies": {
+    "glyphcast": "^0.20.10",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.2",
+    "typescript": "5.9.2",
+    "vite": "7.1.5"
+  }
+}
