@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.5
+
+- Terminal: remote chunks load with one request each and six at a time, so a hub video keeps up instead of pausing for "loading…" every few seconds
+
 ## 0.20.4
 
 - Braille is the default render mode everywhere: the player, the element, the renderer and the terminal

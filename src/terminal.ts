@@ -293,12 +293,15 @@ const indexed = async (read: (offset: number, length: number) => Promise<Uint8Ar
       },
     };
   }
-  const pieces = entries.map((entry) => ({
+  const pieces = entries.map((entry, at) => ({
     start: entry.start,
     frames: entry.frames,
+    // one request per chunk: it ends where the next chunk (or the index) starts, the 6-byte head comes along
     load: async () => {
-      const top = await read(entry.offset, 6);
-      return read(entry.offset + 6, new DataView(top.buffer, top.byteOffset).getUint32(0, true));
+      const end = entries[at + 1]?.offset ?? size - length;
+      const bytes = await read(entry.offset, end - entry.offset);
+      const body = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
+      return bytes.subarray(6, 6 + body);
     },
   }));
   return { info, pieces, audio, subtitles, complete: () => true, close };
@@ -575,7 +578,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   const prefetch = (from: number): void => {
     const at = library.pieces.findIndex((item) => from >= item.start && from < item.start + item.frames);
     if (at < 0) return;
-    for (let step = 0; step <= AHEAD && inFlight < 3; step += 1) {
+    for (let step = 0; step <= AHEAD && inFlight < 6; step += 1) {
       const piece = library.pieces[at + step];
       if (piece && !raw.has(piece.start)) void bytes(piece).catch(() => undefined);
     }
