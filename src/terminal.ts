@@ -181,8 +181,8 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
             const own = grid?.pixels ? [grid.pixels[cell * 4] ?? 0, grid.pixels[cell * 4 + 1] ?? 0, grid.pixels[cell * 4 + 2] ?? 0] : center;
             color = paint(own, Math.min(1, level(own) + 0.1)).map((value) => value * 1.15) as [number, number, number];
             const dark = darkSide();
-            // the dark side shows about as bright as a dotted cell of that color looks: no black outline, no bright block
-            back = paint(dark, level(dark)).map((value) => value * Math.max(fill, 0.55));
+            // the gaps are dimmed exactly like the backgrounds around them, so letters on a colored scene get no halo
+            back = paint(dark, level(dark)).map((value) => value * fill);
           }
           char = String.fromCharCode(0x2800 + bits);
         } else {

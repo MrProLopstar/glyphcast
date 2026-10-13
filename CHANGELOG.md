@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.3
+
+- Terminal: letters on colored backgrounds get no dark halo, the gaps around them are dimmed like their neighbors
+
 ## 0.21.2
 
 - Videos without sound play a silent track, so system media controls work for them too
