@@ -122,4 +122,4 @@ npx glyphcast play hub:<name>      # watch with sound, pause and seeking
 
 ## License
 
-MIT
+Apache License 2.0 (see LICENSE and NOTICE). Versions up to 0.20.13 were released under MIT.

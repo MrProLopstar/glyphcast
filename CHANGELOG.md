@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.0
+
+- License changed to Apache 2.0 (with a NOTICE file); versions up to 0.20.13 stay under MIT
+
 ## 0.20.13
 
 - Terminal: the close button at the end of the status bar is no longer cut off

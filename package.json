@@ -1,6 +1,6 @@
 {
   "name": "glyphcast",
-  "version": "0.20.13",
+  "version": "0.21.0",
   "description": "Video as colored glyphs: a complete WebGL2 player with controls and PiP, and a glyph stream a server can send instead of video",
   "keywords": [
     "ascii",
@@ -16,7 +16,7 @@
     "react",
     "vue"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "MrProLopstar",
   "type": "module",
   "sideEffects": [
@@ -58,6 +58,7 @@
     "dist",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "CHANGELOG.md",
     "README.ru.md"
   ],
