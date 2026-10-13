@@ -1,6 +1,6 @@
 {
   "name": "@mrprolopstar/glyphcast",
-  "version": "0.20.11",
+  "version": "0.20.12",
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts",

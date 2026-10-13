@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.12
+
+- Terminal: the close button at the end of the status bar is no longer cut off
+
 ## 0.20.11
 
 - Files with an index start at once: the picture is fetched from its first chunk and plays while the embedded sound loads in the background, then the sound joins at the current moment (a film used to show a black screen for a minute on a phone)
