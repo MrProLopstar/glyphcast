@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.20.12
+## 0.20.13
 
 - Terminal: the close button at the end of the status bar is no longer cut off
 

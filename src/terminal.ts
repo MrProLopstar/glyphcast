@@ -780,7 +780,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       ];
       const widthOf = (segments: readonly Segment[]): number => segments.reduce((sum, segment) => sum + segment.text.length + 3, 0);
       while (options$.length > 1 && span - 3 - time$.length - widthOf(options$) < 10) options$.splice(options$.length - 2, 1);
-      const bar = Math.max(4, span - 3 - time$.length - widthOf(options$) - 1);
+      // two spare columns at the end: some terminals draw ✕ two cells wide and cut it at the edge
+      const bar = Math.max(4, span - 3 - time$.length - widthOf(options$) - 3);
       const filled = Math.round(share * bar);
       const map: typeof controls = [];
       let column = offset + 1;
