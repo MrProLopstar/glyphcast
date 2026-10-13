@@ -59,7 +59,7 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .played { background: var(--accent); }
 .knob { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: var(--ink); box-shadow: 0 1px 6px rgba(0,0,0,0.5); transform: scale(0); transition: transform 0.15s; }
 .progress:hover .knob { transform: scale(1); }
-.thumb { position: absolute; top: auto; bottom: calc(100% + 30px); width: 160px; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.6); transform: translateX(-50%); opacity: 0; pointer-events: none; image-rendering: auto; }
+.thumb { position: absolute; top: auto; bottom: calc(100% + 30px); width: 160px; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.6); transform: translateX(-50%); opacity: 0; pointer-events: none; image-rendering: auto; object-fit: fill; }
 @media (hover: hover) { .progress:hover .thumb.ready, .progress:hover .tip { opacity: 1; } }
 .progress.scrub .thumb.ready, .progress.scrub .tip { opacity: 1; }
 .tip { position: absolute; bottom: 22px; padding: 3px 7px; border-radius: 6px; background: var(--panel); font: 12px ui-monospace, Consolas, monospace; transform: translateX(-50%); opacity: 0; pointer-events: none; }

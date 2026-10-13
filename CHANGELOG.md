@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.9
+
+- Seek bar thumbnails keep the picture proportions instead of a squeezed strip
+
 ## 0.20.8
 
 - Terminal: dot patterns only for thin bright lines (up to 4 lit dots); other patterned cells are drawn as usual at their real brightness, no glaring edges
