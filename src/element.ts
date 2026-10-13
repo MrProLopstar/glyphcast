@@ -495,7 +495,7 @@ export class GlyphPlayerElement extends HTMLElement {
       boost,
       fill,
       toggle('Автояркость и контраст', look.autoLevels !== false, (next) => player.configure({ autoLevels: next })),
-      toggle('Чёткость ×2', look.sharp === true, (next) => player.configure({ sharp: next })),
+      toggle('Чёткость ×2', look.sharp !== false, (next) => player.configure({ sharp: next })),
       toggle('Плавность', look.smooth !== false, (next) => player.configure({ smooth: next })),
       toggle('Контуры', look.edges === true, (next) => player.configure({ edges: next })),
       toggle('Кинескоп', look.crt === true, (next) => player.configure({ crt: next })),

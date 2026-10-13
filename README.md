@@ -43,7 +43,7 @@ No bundler? `import 'https://cdn.jsdelivr.net/npm/glyphcast@0/dist/element.js/+e
 | `autolevels` | `false` turns off per-scene brightness and contrast |
 | `mode` | `glyphs`, `braille` or `halftone` |
 | `edges`, `crt` | Contours and the tube screen look |
-| `sharp` | Sharp ×2: edge-directed upscaling, off by default |
+| `sharp` | `false` turns off sharp ×2 (edge-directed upscaling) |
 | `smooth` | `false` turns off smoothing (in-between frames along block motion) |
 | `fill` | Cell background tinted by its color, 0 to 1, default `0.25` |
 | `autoplay`, `muted`, `loop` | As on `<video>` |

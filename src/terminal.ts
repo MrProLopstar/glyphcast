@@ -457,7 +457,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     tint: Math.max(0, TINTS.findIndex(([, tint]) => tint === (options.tint ?? null))),
     boost: options.boost ?? 1.3,
     fill: Math.max(0, FILLS.indexOf(options.fill ?? 0.25)),
-    sharp: false,
+    sharp: true,
     smooth: true,
   };
   let previous: Uint8ClampedArray | null = null;

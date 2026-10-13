@@ -25,7 +25,7 @@ export interface LookOptions {
   readonly crt?: boolean;
   /** Cell background tinted by its color, 0 for pure black. Default 0.25. */
   readonly fill?: number;
-  /** Edge-directed 2× upscaling before drawing: sharper contours from the same stream. Default false. */
+  /** Edge-directed 2× upscaling before drawing: sharper contours from the same stream. Default true. */
   readonly sharp?: boolean;
   /** Frames between the stream's frames along block motion, for `.gcast` sources. Default true. */
   readonly smooth?: boolean;
@@ -124,7 +124,7 @@ export class GlyphPlayer extends EventTarget {
       edges: options.edges ?? false,
       crt: options.crt ?? false,
       fill: options.fill ?? 0.25,
-      sharp: options.sharp ?? false,
+      sharp: options.sharp ?? true,
       smooth: options.smooth ?? true,
     };
     this.renderer = new GlyphRenderer(canvas, { glyphs: this.look.glyphs, background: this.look.background, ...(options.glyphSize ? { glyphSize: options.glyphSize } : {}), ...(options.font ? { font: options.font } : {}) });

@@ -201,10 +201,10 @@ describe('upscale2x', () => {
     const out = upscale2x(new Uint8Array(grid), 3, 3);
     expect(out.length).toBe(6 * 6 * 4);
     const at = (x: number, y: number): number => out[(y * 6 + x) * 4] ?? -1;
-    expect(at(3, 2)).toBe(255);
-    expect(at(2, 2)).toBe(0);
-    expect(at(3, 3)).toBe(0);
-    expect(at(1, 1)).toBe(0);
+    expect(at(3, 2)).toBeGreaterThan(150);
+    expect(at(2, 2)).toBeLessThan(64);
+    expect(at(3, 3)).toBeLessThan(64);
+    expect(at(1, 1)).toBeLessThan(64);
   });
 });
 

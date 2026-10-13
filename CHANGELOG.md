@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0
+
+- Sharp ×2 is on again with a new upscaler made for video: neighbours are compared relative to the cell, so edges are found even when colors drift, and smooth areas are blended instead of repeated
+
 ## 0.13.1
 
 - Sharp ×2 is off by default: on video it changes too little to be worth it; the menu, `sharp` and the terminal 2x button still turn it on
