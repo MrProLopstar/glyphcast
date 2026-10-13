@@ -220,6 +220,7 @@ export class GlyphPlayerElement extends HTMLElement {
 
   disconnectedCallback(): void {
     this.player.destroy();
+    this.silence?.pause();
   }
 
   attributeChangedCallback(name: string, previous: string | null, next: string | null): void {
@@ -315,6 +316,38 @@ export class GlyphPlayerElement extends HTMLElement {
   }
 
   private sessionAt = 0;
+  private silence: HTMLAudioElement | null = null;
+
+  /**
+   * A quiet loop for pictures without sound: systems only show their media controls for pages that play audio,
+   * so a silent track keeps the notification, the media keys and the lock screen working.
+   */
+  private hush(): void {
+    const playing = !this.player.paused && !this.player.hasAudio;
+    if (playing && !this.silence) {
+      const rate = 8000;
+      const wav = new DataView(new ArrayBuffer(44 + rate));
+      const text = (at: number, value: string) => [...value].forEach((char, index) => wav.setUint8(at + index, char.charCodeAt(0)));
+      text(0, 'RIFF');
+      wav.setUint32(4, 36 + rate, true);
+      text(8, 'WAVEfmt ');
+      wav.setUint32(16, 16, true);
+      wav.setUint16(20, 1, true);
+      wav.setUint16(22, 1, true);
+      wav.setUint32(24, rate, true);
+      wav.setUint32(28, rate, true);
+      wav.setUint16(32, 1, true);
+      wav.setUint16(34, 8, true);
+      text(36, 'data');
+      wav.setUint32(40, rate, true);
+      for (let at = 44; at < 44 + rate; at += 1) wav.setUint8(at, 128);
+      this.silence = new Audio(URL.createObjectURL(new Blob([wav.buffer], { type: 'audio/wav' })));
+      this.silence.loop = true;
+    }
+    if (!this.silence) return;
+    if (playing) void this.silence.play().catch(() => undefined);
+    else this.silence.pause();
+  }
 
   /**
    * Tells the system about the playback: the title and poster in the Windows media flyout and the phone's
@@ -471,9 +504,19 @@ export class GlyphPlayerElement extends HTMLElement {
     player.addEventListener('waiting', () => this.frame.classList.add('waiting'));
     player.addEventListener('playing', () => this.frame.classList.remove('waiting'));
     player.addEventListener('play', () => this.poster(false));
-    player.addEventListener('play', () => this.mediaSession());
-    player.addEventListener('pause', () => this.mediaSession());
-    player.addEventListener('timeupdate', () => this.mediaSession(true));
+    player.addEventListener('play', () => {
+      this.hush();
+      this.mediaSession();
+    });
+    player.addEventListener('pause', () => {
+      this.hush();
+      this.mediaSession();
+    });
+    player.addEventListener('timeupdate', () => {
+      // the real sound may arrive later (a film's embedded track loads in the background) and replaces the silence
+      if (this.silence && !this.silence.paused && this.player.hasAudio) this.hush();
+      this.mediaSession(true);
+    });
     player.addEventListener('timeupdate', () => player.currentTime > 0.05 && this.poster(false));
     player.addEventListener('error', (event) => this.message(String((event as CustomEvent<Error>).detail?.message ?? 'Playback error')));
     player.addEventListener('ended', () => {

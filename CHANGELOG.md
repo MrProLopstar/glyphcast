@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.2
+
+- Videos without sound play a silent track, so system media controls work for them too
+
 ## 0.21.1
 
 - The player tells the system about playback (Media Session): title and poster in the Windows media flyout and phone notifications, media keys, headsets and lock screens pause, play and seek
