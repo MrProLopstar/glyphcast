@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.1
+
+- Phones: dragging the seek bar no longer gets cancelled by page scrolling, the thumbnail and time sit above the bar and hide when the finger lifts
+
 ## 0.19.0
 
 - Qualities: `encode --cols 120,180` writes one file per grid, `publish --variant` adds them to a hub video, the player picks one by its width (`sources` attribute) and the settings menu switches them, the terminal picks by its width

@@ -51,7 +51,7 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .controls { position: absolute; left: 0; right: 0; bottom: 0; padding: 36px 12px 10px; background: linear-gradient(transparent, rgba(0,0,0,0.78)); transition: opacity 0.25s, transform 0.25s; }
 .idle .controls { opacity: 0; transform: translateY(8px); pointer-events: none; }
 .idle { cursor: none; }
-.progress { position: relative; height: 18px; cursor: pointer; display: flex; align-items: center; margin: 0 4px; }
+.progress { position: relative; height: 18px; cursor: pointer; display: flex; align-items: center; margin: 0 4px; touch-action: none; }
 .track { position: relative; width: 100%; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.22); transform: scaleY(0.67); transition: transform 0.15s; }
 .progress:hover .track { transform: scaleY(1); }
 .buffer, .played { position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit; }
@@ -59,10 +59,10 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .played { background: var(--accent); }
 .knob { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: var(--ink); box-shadow: 0 1px 6px rgba(0,0,0,0.5); transform: scale(0); transition: transform 0.15s; }
 .progress:hover .knob { transform: scale(1); }
-.thumb { position: absolute; bottom: 48px; width: 160px; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.6); transform: translateX(-50%); opacity: 0; pointer-events: none; image-rendering: auto; }
-.progress:hover .thumb.ready { opacity: 1; }
+.thumb { position: absolute; top: auto; bottom: calc(100% + 30px); width: 160px; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.6); transform: translateX(-50%); opacity: 0; pointer-events: none; image-rendering: auto; }
+@media (hover: hover) { .progress:hover .thumb.ready, .progress:hover .tip { opacity: 1; } }
+.progress.scrub .thumb.ready, .progress.scrub .tip { opacity: 1; }
 .tip { position: absolute; bottom: 22px; padding: 3px 7px; border-radius: 6px; background: var(--panel); font: 12px ui-monospace, Consolas, monospace; transform: translateX(-50%); opacity: 0; pointer-events: none; }
-.progress:hover .tip { opacity: 1; }
 .row { display: flex; align-items: center; gap: 2px; margin-top: 4px; }
 .row button { width: 38px; height: 38px; }
 .row button:hover { background: rgba(255,255,255,0.12); }
@@ -389,12 +389,20 @@ export class GlyphPlayerElement extends HTMLElement {
     });
     progress.addEventListener('pointerdown', (event) => {
       this.seeking = true;
+      progress.classList.add('scrub');
       progress.setPointerCapture(event.pointerId);
       this.paintProgress(share(event));
+      progress.dispatchEvent(new PointerEvent('pointermove', event));
     });
     progress.addEventListener('pointerup', (event) => {
       this.seeking = false;
+      progress.classList.remove('scrub');
       void player.seek(share(event) * player.duration);
+    });
+    progress.addEventListener('pointercancel', () => {
+      this.seeking = false;
+      progress.classList.remove('scrub');
+      this.update();
     });
 
     for (const type of ['play', 'pause', 'timeupdate', 'durationchange', 'progress', 'volumechange', 'ratechange', 'ended', 'loadedmetadata']) player.addEventListener(type, () => this.update());
