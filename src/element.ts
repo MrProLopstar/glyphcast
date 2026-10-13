@@ -42,8 +42,9 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .big:hover { transform: scale(1.06); }
 .playing .big { opacity: 0; pointer-events: none; transform: scale(0.8); }
 .touch.playing:not(.idle) .big { opacity: 0.9; pointer-events: auto; transform: none; }
-.spinner { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.2); border-top-color: var(--accent); animation: spin 0.8s linear infinite; display: none; }
+.spinner { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px; box-sizing: border-box; border-radius: 50%; border: 3px solid rgba(255,255,255,0.2); border-top-color: var(--accent); animation: spin 0.8s linear infinite; display: none; }
 .waiting .spinner { display: block; }
+.waiting .big { opacity: 0; pointer-events: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .message { position: absolute; inset: auto 16px 80px; padding: 10px 14px; border-radius: 10px; background: rgba(120, 20, 20, 0.85); display: none; }
 .message.on { display: block; }
@@ -125,10 +126,10 @@ type DocumentPip = { requestWindow: (options: { width: number; height: number })
  *
  * Attributes: `src`, `poster` (image shown until the first frame), `audio`, `youtube`, `file` (a video in the server folder), `server`, `subtitles` (WebVTT or SRT URL),
  * `cols`, `glyphs`, `tint`, `boost`, `autolevels`, `mode` (`glyphs`, `braille`, `halftone`), `edges`, `crt`, `autoplay`,
- * `muted`, `loop`, `fullsize` (fill the element's own size, for embeds). The `player` property gives the underlying `GlyphPlayer`.
+ * `muted`, `loop`, `sources` (JSON list of `{ cols, src }` qualities, picked by width), `fullsize` (fill the element's own size, for embeds). The `player` property gives the underlying `GlyphPlayer`.
  */
 export class GlyphPlayerElement extends HTMLElement {
-  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'poster', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt', 'sharp', 'smooth'];
+  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'poster', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt', 'sharp', 'smooth', 'sources'];
 
   readonly player: GlyphPlayer;
   private readonly root: ShadowRoot;
@@ -140,6 +141,7 @@ export class GlyphPlayerElement extends HTMLElement {
   private pipVideo: HTMLVideoElement | null = null;
   private loading = 0;
   private previewTicket = 0;
+  private quality = 0;
 
   constructor() {
     super();
@@ -220,7 +222,7 @@ export class GlyphPlayerElement extends HTMLElement {
 
   attributeChangedCallback(name: string, previous: string | null, next: string | null): void {
     if (previous === next || !this.isConnected) return;
-    if (['src', 'audio', 'youtube', 'file', 'server'].includes(name)) void this.reload();
+    if (['src', 'audio', 'youtube', 'file', 'server', 'sources'].includes(name)) void this.reload();
     else if (name === 'subtitles') this.captions();
     else this.player.configure(this.look());
     this.renderMenu();
@@ -266,9 +268,39 @@ export class GlyphPlayerElement extends HTMLElement {
       }
       return;
     }
-    const src = this.getAttribute('src');
+    const sources = this.sources();
     this.badge(null);
+    if (sources.length > 0) {
+      const target = (this.frame.clientWidth || 800) * devicePixelRatio / 8;
+      const fitting = sources.filter((source) => source.cols <= target);
+      this.quality = (fitting.at(-1) ?? sources[0])?.cols ?? 0;
+      const chosen = sources.find((source) => source.cols === this.quality);
+      if (chosen) await this.load(chosen.src);
+      return;
+    }
+    const src = this.getAttribute('src');
     if (src) await this.load(src);
+  }
+
+  /** Alternative files from the `sources` attribute, a JSON list of `{ cols, src }`, sorted from small to large. */
+  private sources(): { readonly cols: number; readonly src: string }[] {
+    try {
+      const list = JSON.parse(this.getAttribute('sources') ?? '[]') as { cols: number; src: string }[];
+      return list.filter((item) => item.cols > 0 && typeof item.src === 'string').sort((a, b) => a.cols - b.cols);
+    } catch {
+      return [];
+    }
+  }
+
+  private async switchQuality(cols: number): Promise<void> {
+    const source = this.sources().find((item) => item.cols === cols);
+    if (!source || cols === this.quality) return;
+    const time = this.player.currentTime;
+    const playing = !this.player.paused;
+    this.quality = cols;
+    await this.load(source.src);
+    await this.player.seek(time);
+    if (playing) await this.player.play().catch(() => undefined);
   }
 
   private poster(show: boolean): void {
@@ -483,6 +515,8 @@ export class GlyphPlayerElement extends HTMLElement {
     const parts: HTMLElement[] = [
       chips('Скорость', SPEEDS.map((speed) => [`${speed}×`, speed] as const), player.playbackRate, (value) => (player.playbackRate = Number(value))),
     ];
+    const qualities = this.sources();
+    if (qualities.length > 1) parts.push(chips('Качество', qualities.map((source) => [`${source.cols} кол.`, source.cols] as const), this.quality, (value) => void this.switchQuality(Number(value))));
     if (player.sourceType === 'video') {
       parts.push(chips('Сетка', GRIDS.map((cols) => [String(cols), cols] as const), look.cols, (value) => {
         player.configure({ cols: Number(value) });

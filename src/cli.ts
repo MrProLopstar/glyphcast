@@ -10,7 +10,7 @@ import { playInTerminal } from './terminal.js';
 
 const USAGE = `glyphcast: video as glyphs
 
-  glyphcast encode <video...> [--out file.gcast] [--cols 160] [--fps 24] [--threshold 3] [--embed | --audio file.m4a] [--poster] [--chunk 2]
+  glyphcast encode <video...> [--out file.gcast] [--cols 160 | --cols 120,180] [--fps 24] [--threshold 3] [--embed | --audio file.m4a] [--poster] [--chunk 2]
       --embed puts Opus sound inside the .gcast, --audio writes it to a separate file,
       --poster saves a frame as <name>.jpg for the player; several videos are encoded one by one;
       black bars that stay black through the whole video are cut, --no-crop keeps them;
@@ -21,7 +21,7 @@ const USAGE = `glyphcast: video as glyphs
       C colors, [ ] saturation, B background, Q quit; sound via ffplay
   glyphcast hub [search]
       lists open videos in the gcast hub; play them with glyphcast play hub:<name>
-  glyphcast publish <file.gcast> --title "Name" [--license CC-BY] [--image poster.jpg] [--subtitles file.vtt]
+  glyphcast publish <file.gcast> --title "Name" [--license CC-BY] [--image poster.jpg] [--subtitles file.vtt] [--variant other-grid.gcast]
       uploads to the gcast hub with the key from GLYPHCAST_HUB_KEY; licenses: CC0, CC-BY, CC-BY-SA,
       CC-BY-NC, public-domain list the video, own keeps it reachable by link only
   glyphcast info <file.gcast>
@@ -55,6 +55,7 @@ const main = async (): Promise<void> => {
       license: { type: 'string' },
       image: { type: 'string' },
       subtitles: { type: 'string' },
+      variant: { type: 'string', multiple: true },
       audio: { type: 'string' },
       port: { type: 'string' },
       host: { type: 'string' },
@@ -118,6 +119,10 @@ const main = async (): Promise<void> => {
     }
     if (values.image) await send(`${files}/poster/${String(entry['id'])}`, values.image, 'image/jpeg');
     if (values.subtitles) await send(`${files}/subtitles/${String(entry['id'])}`, values.subtitles, 'text/vtt');
+    for (const extra of values.variant ?? []) {
+      const added = await send(`${files}/variant/${String(entry['id'])}`, extra, 'application/octet-stream');
+      console.log(`${basename(extra)}: added as ${String(added['cols'])} columns`);
+    }
     console.log(`${String(entry['title'])}: hub:${String(entry['listed'] ? entry['slug'] : entry['id'])}`);
     return;
   }
@@ -150,7 +155,11 @@ glyphcast play hub:<name>   files from ${files}`);
       if (!/^[\w-]{11}$/.test(id)) throw new Error(`No video "${name}" in the hub; see glyphcast hub`);
       if (video) console.log(video.title);
       const subtitles = video?.subtitles ? await fetch(`${files}/v/${id}.vtt`).then((response) => (response.ok ? response.text() : undefined)).catch(() => undefined) : undefined;
-      await playInTerminal(`${files}/v/${id}.gcast`, { title: video?.title ?? `hub:${name}`, ...(subtitles ? { subtitles } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
+      const width = process.stdout.columns || 120;
+      const grids = [video?.cols ?? 0, ...(video?.variants ?? [])].filter((cols) => cols > 0).sort((a, b) => a - b);
+      const pick = grids.filter((cols) => cols <= width * 1.5).at(-1) ?? grids[0];
+      const file = video && pick && pick !== video.cols ? `${id}-${pick}` : id;
+      await playInTerminal(`${files}/v/${file}.gcast`, { title: video?.title ?? `hub:${name}`, ...(subtitles ? { subtitles } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
       return;
     }
     await playInTerminal(input, { ...(values.subtitles ? { subtitles: readFileSync(values.subtitles, 'utf8') } : {}), ...(values.cols ? { cols: number('cols', values.cols) } : {}), ...(values.fps ? { fps: number('fps', values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
@@ -174,7 +183,12 @@ glyphcast play hub:<name>   files from ${files}`);
   }
   if (command !== 'encode') throw new Error(`Unknown command "${command}"`);
   if (values.out && inputs.length > 1) throw new Error('--out works with one video; several are saved next to the current folder by name');
-  for (const video of inputs) await encode(video, values.out ?? `${basename(video, extname(video))}.gcast`, values);
+  const grids = (values.cols ?? '').split(',').filter(Boolean);
+  if (grids.length > 1 && values.out) throw new Error('--out works with one --cols value; several grids are saved as <name>-<cols>.gcast');
+  for (const video of inputs) {
+    if (grids.length > 1) for (const cols of grids) await encode(video, `${basename(video, extname(video))}-${cols}.gcast`, { ...values, cols, poster: values.poster === true && cols === grids.at(-1) });
+    else await encode(video, values.out ?? `${basename(video, extname(video))}.gcast`, values);
+  }
 };
 
 interface HubVideo {
@@ -185,6 +199,8 @@ interface HubVideo {
   readonly listed: boolean;
   readonly duration: number;
   readonly subtitles?: boolean;
+  readonly cols?: number;
+  readonly variants?: readonly number[];
 }
 
 const hub = async (): Promise<{ readonly files: string; readonly videos: HubVideo[] }> => {

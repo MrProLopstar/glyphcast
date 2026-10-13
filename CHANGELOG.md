@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.0
+
+- Qualities: `encode --cols 120,180` writes one file per grid, `publish --variant` adds them to a hub video, the player picks one by its width (`sources` attribute) and the settings menu switches them, the terminal picks by its width
+- The loading spinner sits exactly in the middle and hides the play button while it spins
+
 ## 0.18.1
 
 - Phones: a tap shows or hides the controls instead of pausing, with a pause button in the middle; fullscreen fills the window where the browser cannot make an element fullscreen (iPhone) and tries landscape
