@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.0
+
+- `glyphcast publish` uploads files over 95 MB in 90 MB parts, so the hub takes whole films; the hub serves the parts as one file with seeking
+
 ## 0.14.0
 
 - Sharp ×2 is on again with a new upscaler made for video: neighbours are compared relative to the cell, so edges are found even when colors drift, and smooth areas are blended instead of repeated

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { parseArgs } from 'node:util';
 import { StreamReader } from './format.js';
@@ -83,7 +84,36 @@ const main = async (): Promise<void> => {
       if (!response.ok) throw new Error(`The hub refused ${basename(path)}: ${String(data['error'] ?? response.status)}`);
       return data;
     };
-    const entry = await send(`${files}/upload?${query}`, input, 'application/octet-stream');
+    const size = statSync(input).size;
+    let entry: Record<string, unknown>;
+    if (size <= 95 * 1048576) entry = await send(`${files}/upload?${query}`, input, 'application/octet-stream');
+    else {
+      const call = async (url: string, body?: Uint8Array<ArrayBuffer>): Promise<Record<string, unknown>> => {
+        const response = await fetch(url, { method: 'POST', headers: { 'x-hub-key': key, 'content-type': 'application/octet-stream' }, ...(body ? { body } : {}) });
+        const data = (await response.json()) as Record<string, unknown>;
+        if (!response.ok) throw new Error(`The hub refused ${basename(input)}: ${String(data['error'] ?? response.status)}`);
+        return data;
+      };
+      const start = await call(`${files}/parts/start`);
+      const id = String(start['id']);
+      const part = Number(start['part']);
+      const sizes: number[] = [];
+      const file = await open(input, 'r');
+      try {
+        for (let offset = 0, index = 0; offset < size; offset += part, index += 1) {
+          const bytes = new Uint8Array(Math.min(part, size - offset));
+          await file.read(bytes, 0, bytes.length, offset);
+          await call(`${files}/parts/${id}/${index}`, bytes);
+          sizes.push(bytes.length);
+          process.stdout.write(`\r${basename(input)}: ${Math.round(((offset + bytes.length) / size) * 100)}% uploaded   `);
+        }
+      } finally {
+        await file.close();
+      }
+      process.stdout.write('\n');
+      query.set('sizes', sizes.join(','));
+      entry = await call(`${files}/parts/${id}/finish?${query}`);
+    }
     if (values.image) await send(`${files}/poster/${String(entry['id'])}`, values.image, 'image/jpeg');
     if (values.subtitles) await send(`${files}/subtitles/${String(entry['id'])}`, values.subtitles, 'text/vtt');
     console.log(`${String(entry['title'])}: hub:${String(entry['listed'] ? entry['slug'] : entry['id'])}`);
