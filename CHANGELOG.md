@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.4
+
+- Terminal on Windows: pausing stops the sound, the whole ffplay process tree is closed
+
 ## 0.19.3
 
 - Terminal: the status bar no longer scrolls the screen when it fills the last column

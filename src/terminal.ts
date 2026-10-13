@@ -402,7 +402,9 @@ const sounds = (audio: AudioSource | null, total: () => number, ffplay: string):
   let missing = false;
   const stop = (): void => {
     session += 1;
-    child?.kill();
+    // ponytail: on Windows ffplay may sit behind a shim, so kill the whole tree or the sound keeps going
+    if (child?.pid && process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => undefined);
+    else child?.kill();
     child = null;
   };
   if (!audio) return { start: (at) => Promise.resolve(at), stop, close: stop };
