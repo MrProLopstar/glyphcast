@@ -480,10 +480,16 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       startedAt = performance.now();
     });
   };
+  let settle: ReturnType<typeof setTimeout> | null = null;
   const jump = (seconds: number): void => {
     base = Math.max(0, Math.min(total(), seconds));
     startedAt = performance.now();
-    if (playing) sound();
+    audio.stop();
+    if (settle) clearTimeout(settle);
+    settle = setTimeout(() => {
+      settle = null;
+      if (playing) sound();
+    }, 250);
   };
   const toggle = (): void => {
     if (playing) {
