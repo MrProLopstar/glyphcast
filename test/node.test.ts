@@ -83,11 +83,11 @@ describe('terminal', () => {
   it('draws a frame as colored glyphs and scales it to fit', async () => {
     const { ansiFrame } = await import('../src/terminal.js');
     const pixels = new Uint8Array([0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255]);
-    const text = ansiFrame(pixels, 2, 2, 3, NEUTRAL, { cellRatio: 2 });
+    const text = ansiFrame(pixels, 2, 2, 3, NEUTRAL, { mode: 'glyphs', cellRatio: 2 });
     const plain = text.replace(/\x1b\[[0-9;]*m/g, '');
     expect(plain.split('\n')).toEqual([' @', expect.stringMatching(/^..$/)]);
     expect(text).toContain('\x1b[38;2;');
-    expect([...ansiFrame(pixels, 2, 2, 3, NEUTRAL, { width: 1, height: 1 }).replace(/\x1b\[[0-9;]*m/g, '')]).toHaveLength(1);
+    expect([...ansiFrame(pixels, 2, 2, 3, NEUTRAL, { mode: 'glyphs', width: 1, height: 1 }).replace(/\x1b\[[0-9;]*m/g, '')]).toHaveLength(1);
     const braille = ansiFrame(pixels, 2, 2, 3, NEUTRAL, { mode: 'braille', fill: 0.25 });
     expect(braille).toMatch(/[⠀-⣿]/);
     expect(braille).toContain('\x1b[48;2;');
