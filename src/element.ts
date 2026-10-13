@@ -28,7 +28,8 @@ const GRIDS = [80, 120, 160, 200, 240, 320];
 const STYLE = `
 :host { display: block; position: relative; --accent: #f0a04b; --ink: #f4f6f8; --panel: rgba(12, 15, 20, 0.86); color-scheme: dark; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .player { position: relative; container-type: inline-size; width: 100%; aspect-ratio: var(--ratio, 16 / 9); background: #000; border-radius: var(--radius, 12px); overflow: hidden; outline: none; user-select: none; color: var(--ink); }
-:host(:fullscreen) .player, .player.pip, :host([fullsize]) .player { border-radius: 0; height: 100%; aspect-ratio: auto; }
+:host(:fullscreen) .player, .player.pip, :host([fullsize]) .player, :host(.filled) .player { border-radius: 0; height: 100%; aspect-ratio: auto; }
+:host(.filled) { position: fixed; inset: 0; z-index: 2147483647; background: #000; }
 canvas, .poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .poster { pointer-events: none; transition: opacity 0.3s; }
 .poster.gone { opacity: 0; }
@@ -40,6 +41,7 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .big svg { width: 34px; height: 34px; margin-left: 4px; }
 .big:hover { transform: scale(1.06); }
 .playing .big { opacity: 0; pointer-events: none; transform: scale(0.8); }
+.touch.playing:not(.idle) .big { opacity: 0.9; pointer-events: auto; transform: none; }
 .spinner { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.2); border-top-color: var(--accent); animation: spin 0.8s linear infinite; display: none; }
 .waiting .spinner { display: block; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -326,9 +328,12 @@ export class GlyphPlayerElement extends HTMLElement {
       this.$('.menu').classList.toggle('on');
       this.renderMenu();
     });
+    this.frame.addEventListener('pointerdown', (event) => this.frame.classList.toggle('touch', event.pointerType === 'touch'));
     this.$('canvas').addEventListener('click', () => {
       if (this.$('.menu').classList.contains('on')) this.$('.menu').classList.remove('on');
-      else this.togglePlay();
+      else if (!this.frame.classList.contains('touch')) this.togglePlay();
+      else if (this.frame.classList.contains('idle') || this.player.paused) this.wake();
+      else this.frame.classList.add('idle');
     });
     this.$('canvas').addEventListener('dblclick', () => void this.toggleFullscreen());
     const level = this.$('.level') as HTMLInputElement;
@@ -391,6 +396,9 @@ export class GlyphPlayerElement extends HTMLElement {
       m: () => (player.muted = !player.muted),
       f: () => void this.toggleFullscreen(),
       p: () => void this.togglePip(),
+      Escape: () => {
+        if (this.classList.contains('filled')) void this.toggleFullscreen();
+      },
     };
     const digit = /^[0-9]$/.test(event.key) ? () => void player.seek((Number(event.key) / 10) * player.duration) : undefined;
     const action = actions[event.key] ?? actions[event.key.toLowerCase()] ?? digit;
@@ -446,7 +454,8 @@ export class GlyphPlayerElement extends HTMLElement {
     this.$('.buffer').style.width = `${duration > 0 ? Math.min(100, (player.bufferedEnd / duration) * 100) : 0}%`;
     this.$('.mute').innerHTML = icon(player.muted || player.volume === 0 ? ICONS.muted : ICONS.volume);
     (this.$('.level') as HTMLInputElement).value = String(player.muted ? 0 : player.volume);
-    this.$('.full').innerHTML = icon(document.fullscreenElement === this ? ICONS.exit : ICONS.full);
+    this.$('.full').innerHTML = icon(document.fullscreenElement === this || this.classList.contains('filled') ? ICONS.exit : ICONS.full);
+    this.$('.big').innerHTML = icon(paused ? ICONS.play : ICONS.pause);
     if (paused) this.frame.classList.remove('idle');
   }
 
@@ -522,9 +531,29 @@ export class GlyphPlayerElement extends HTMLElement {
     );
   }
 
+  /** Fullscreen through the browser where it allows elements, or the player filling the window where it does not (iPhone). */
   async toggleFullscreen(): Promise<void> {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await this.requestFullscreen?.();
+    const orientation = screen.orientation as ScreenOrientation & { lock?: (type: string) => Promise<void> };
+    if (this.classList.contains('filled')) {
+      this.classList.remove('filled');
+      orientation.unlock?.();
+    } else if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      const request = (this.requestFullscreen ?? (this as unknown as { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen)?.bind(this);
+      let native = false;
+      if (request && document.fullscreenEnabled !== false) {
+        try {
+          await request();
+          native = true;
+        } catch {
+          native = false;
+        }
+      }
+      if (!native) this.classList.add('filled');
+      await orientation.lock?.('landscape').catch(() => undefined);
+    }
+    this.update();
   }
 
   /** Picture-in-picture: the whole player with controls where Document PiP exists, the picture alone elsewhere. */

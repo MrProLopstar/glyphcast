@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.1
+
+- Phones: a tap shows or hides the controls instead of pausing, with a pause button in the middle; fullscreen fills the window where the browser cannot make an element fullscreen (iPhone) and tries landscape
+
 ## 0.18.0
 
 - Seek bar thumbnails: hovering the bar shows the frame there, fetched by range request when that part is not loaded yet. `player.preview(seconds)` returns it
