@@ -163,8 +163,8 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
             const own = luma(center[0] ?? 0, center[1] ?? 0, center[2] ?? 0);
             const darker = around.filter((item) => luma(item[0] ?? 0, item[1] ?? 0, item[2] ?? 0) < own - 0.04);
             const dark = darker.length ? [0, 1, 2].map((c) => darker.reduce((sum, item) => sum + (item[c] ?? 0), 0) / darker.length) : center.map((value) => value * 0.5);
-            // the dark side shows in full, not dimmed like a background: no black outline at edges
-            back = paint(dark, level(dark));
+            // the dark side shows about as bright as a dotted cell of that color looks: no black outline, no bright block
+            back = paint(dark, level(dark)).map((value) => value * Math.max(fill, 0.55));
           }
           char = String.fromCharCode(0x2800 + bits);
         } else {

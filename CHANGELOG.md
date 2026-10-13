@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.7
+
+- Terminal: the dark side of patterned cells is dimmed like the dots around it, no bright solid blocks
+
 ## 0.20.6
 
 - Terminal: after a seek, a pause or a wait for loading the picture holds still until the sound really starts, so they stay together
