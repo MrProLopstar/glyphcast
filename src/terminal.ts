@@ -153,6 +153,14 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
             bits = 0;
             for (let dot = 0; dot < 8; dot += 1) if ((pattern >> dot) & 1) bits |= 1 << (BRAILLE[(dot & 1) * 4 + (dot >> 1)] ?? 0);
             color = paint(center, Math.min(1, lit + 0.35)).map((value) => value * 1.15) as [number, number, number];
+            // the cell's color is its bright dots, so the gaps take the darkest neighbor: no grey box around letters
+            const u = 1 / (grid?.cols ?? width);
+            const v = 1 / (grid?.rows ?? height);
+            const cx = (x + 0.5) / width;
+            const cy = (y + 0.5) / height;
+            const around = [sample(cx - u, cy), sample(cx + u, cy), sample(cx, cy - v), sample(cx, cy + v)];
+            const dark = around.reduce((best, item) => (luma(item[0] ?? 0, item[1] ?? 0, item[2] ?? 0) < luma(best[0] ?? 0, best[1] ?? 0, best[2] ?? 0) ? item : best));
+            back = paint(dark, level(dark)).map((value) => value * fill);
           }
           char = String.fromCharCode(0x2800 + bits);
         } else {

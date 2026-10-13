@@ -104,13 +104,25 @@ void main() {
   float level = leveled(dot(source, WEIGHTS));
   vec3 glyph = paint(source, level);
   float ink;
+  vec3 under = glyph * 0.5;
   if (mode == 1) {
     vec2 spot = floor(local * vec2(2.0, 4.0));
     vec3 near = texture(cells, (cell + (spot + 0.5) / vec2(2.0, 4.0)) / grid).rgb;
     float nearLevel = leveled(dot(near, WEIGHTS));
     float lit = step(bayer(spot) * 0.75, nearLevel);
     float pattern = detailed > 0.5 ? floor(texelFetch(patterns, ivec2(cell), 0).r * 255.0 + 0.5) : 0.0;
-    if (pattern > 0.5) lit = mod(floor(pattern / exp2(spot.y * 2.0 + spot.x)), 2.0);
+    if (pattern > 0.5) {
+      lit = mod(floor(pattern / exp2(spot.y * 2.0 + spot.x)), 2.0);
+      // the cell's color belongs to its bright dots; the gaps take the darkest neighbor, so letters get no grey box
+      vec3 dark = texture(cells, (cell + vec2(-0.5, 0.5)) / grid).rgb;
+      vec3 other = texture(cells, (cell + vec2(1.5, 0.5)) / grid).rgb;
+      if (dot(other, WEIGHTS) < dot(dark, WEIGHTS)) dark = other;
+      other = texture(cells, (cell + vec2(0.5, -0.5)) / grid).rgb;
+      if (dot(other, WEIGHTS) < dot(dark, WEIGHTS)) dark = other;
+      other = texture(cells, (cell + vec2(0.5, 1.5)) / grid).rgb;
+      if (dot(other, WEIGHTS) < dot(dark, WEIGHTS)) dark = other;
+      under = paint(dark, leveled(dot(dark, WEIGHTS))) * 0.5;
+    }
     vec2 inside = (fract(local * vec2(2.0, 4.0)) - 0.5) * vec2(1.2, 1.0);
     ink = lit * smoothstep(0.5, 0.36, length(inside));
     glyph = min(paint(pattern > 0.5 ? source : near, pattern > 0.5 ? min(1.0, level + 0.35) : max(level, nearLevel)) * 1.3, vec3(1.0));
@@ -131,7 +143,7 @@ void main() {
     }
     ink = texture(atlas, vec2((index + local.x) / (glyphs + 4.0), local.y)).r;
   }
-  vec3 result = mix(mix(background, glyph * 0.5, fill), glyph, ink);
+  vec3 result = mix(mix(background, under, fill), glyph, ink);
   if (crt > 0.5) {
     result += paint(source, level) * 0.22;
     result *= 0.6 + 0.4 * abs(sin(position.y * PI * 2.0));
