@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.2
+
+- Terminal: the next 30 s of a remote video are fetched ahead; on a slow connection playback pauses with "loading…" instead of skipping
+- The hub lives at glc-hub.1lop.ru, files at glc-api.1lop.ru
+
 ## 0.20.1
 
 - Patterned cells are no longer brightened on top of their bright-dot color, so noise in dark scenes stays dark

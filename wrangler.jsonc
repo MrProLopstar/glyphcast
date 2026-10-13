@@ -1,0 +1,10 @@
+// The playground and converter pages, served by Cloudflare. Run after npm run build: cp -r dist site/lib
+{
+  "name": "glc-site",
+  "compatibility_date": "2026-09-01",
+  "assets": { "directory": "./site" },
+  "routes": [
+    { "pattern": "glc.1lop.ru", "custom_domain": true },
+    { "pattern": "gcast.1lop.ru", "custom_domain": true }
+  ]
+}

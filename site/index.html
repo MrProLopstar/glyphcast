@@ -8,8 +8,8 @@
 <meta property="og:type" content="website">
 <meta property="og:title" content="glyphcast: видео цветными символами">
 <meta property="og:description" content="Плеер на WebGL2 в браузере и в консоли, конвертер видео в компактный поток символов .gcast.">
-<meta property="og:url" content="https://mrprolopstar.github.io/glyphcast/">
-<meta property="og:image" content="https://mrprolopstar.github.io/glyphcast/preview.jpg">
+<meta property="og:url" content="https://glc.1lop.ru/">
+<meta property="og:image" content="https://glc.1lop.ru/preview.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="660">
 <meta name="twitter:card" content="summary_large_image">
@@ -86,14 +86,14 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
       <p class="tagline">Видео цветными символами: плеер на WebGL2 и поток символов вместо видео</p>
     </div>
     <nav>
-      <a href="https://mrprolopstar.github.io/gcast-hub/">Хаб</a>
+      <a href="https://glc-hub.1lop.ru/">Хаб</a>
       <a href="https://github.com/MrProLopstar/glyphcast">GitHub</a>
       <a href="https://www.npmjs.com/package/glyphcast">npm</a>
     </nav>
   </header>
 
 
-  <glyph-player id="player" src="https://gcast-hub.aniclap.workers.dev/v/XcKVwaaFqAM.gcast" poster="./onepiece.jpg" mode="braille" cols="160"></glyph-player>
+  <glyph-player id="player" src="https://glc-api.1lop.ru/v/XcKVwaaFqAM.gcast" poster="./onepiece.jpg" mode="braille" cols="160"></glyph-player>
 
   <section class="sources">
     <div class="row">
@@ -137,7 +137,7 @@ kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px s
       <div class="row">
         <button id="convert-play" type="button">Смотреть</button>
         <a id="convert-save" class="button" download="video.gcast">Скачать .gcast</a>
-        <a class="button" href="https://mrprolopstar.github.io/gcast-hub/#upload">Опубликовать в хабе</a>
+        <a class="button" href="https://glc-hub.1lop.ru/#upload">Опубликовать в хабе</a>
       </div>
     </div>
   </section>
@@ -176,7 +176,7 @@ $('file').addEventListener('change', async (event) => {
 
 $('sample').addEventListener('click', () => {
   clearSource();
-  player.setAttribute('src', 'https://gcast-hub.aniclap.workers.dev/v/XcKVwaaFqAM.gcast');
+  player.setAttribute('src', 'https://glc-api.1lop.ru/v/XcKVwaaFqAM.gcast');
 });
 
 $('camera').addEventListener('click', async () => {

@@ -336,7 +336,7 @@ interface HubVideo {
 }
 
 const hub = async (): Promise<{ readonly files: string; readonly videos: HubVideo[] }> => {
-  const base = (process.env['GLYPHCAST_HUB'] ?? 'https://mrprolopstar.github.io/gcast-hub').replace(/\/$/, '');
+  const base = (process.env['GLYPHCAST_HUB'] ?? 'https://glc-hub.1lop.ru').replace(/\/$/, '');
   const config = await fetch(`${base}/hub.json`);
   if (!config.ok) throw new Error(`The hub at ${base} does not answer`);
   const files = ((await config.json()) as { files: string }).files.replace(/\/$/, '');

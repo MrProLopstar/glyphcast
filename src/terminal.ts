@@ -514,7 +514,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   let quit = false;
   let levels = NEUTRAL;
   const cache = new Map<number, Promise<DecodedChunk>>();
-  const now = (): number => Math.min(total(), playing ? base + (performance.now() - startedAt) / 1000 : base);
+  let waiting = false;
+  const now = (): number => Math.min(total(), playing && !waiting ? base + (performance.now() - startedAt) / 1000 : base);
   const sound = (): void => {
     const wanted = base;
     void audio.start(wanted).then((actual) => {
@@ -545,10 +546,47 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       sound();
     }
   };
+  // compressed chunks for the next ~30 s are fetched ahead, so a slow connection pauses with "loading" instead of skipping
+  const raw = new Map<number, Promise<Uint8Array>>();
+  const arrived = new Set<number>();
+  let inFlight = 0;
+  const bytes = (piece: Piece): Promise<Uint8Array> => {
+    let found = raw.get(piece.start);
+    if (!found) {
+      inFlight += 1;
+      found = piece.load().finally(() => (inFlight -= 1));
+      found.then(() => arrived.add(piece.start), () => {
+        raw.delete(piece.start);
+        arrived.delete(piece.start);
+      });
+      raw.set(piece.start, found);
+    }
+    return found;
+  };
+  const AHEAD = Math.max(4, Math.ceil(30 / Math.max(0.1, info.chunkFrames / info.fps)));
+  const prefetch = (from: number): void => {
+    const at = library.pieces.findIndex((item) => from >= item.start && from < item.start + item.frames);
+    if (at < 0) return;
+    for (let step = 0; step <= AHEAD && inFlight < 3; step += 1) {
+      const piece = library.pieces[at + step];
+      if (piece && !raw.has(piece.start)) void bytes(piece).catch(() => undefined);
+    }
+    const keep = new Set(library.pieces.slice(Math.max(0, at - 2), at + AHEAD + 2).map((item) => item.start));
+    for (const key of raw.keys()) if (!keep.has(key)) {
+      raw.delete(key);
+      arrived.delete(key);
+    }
+  };
+  /** True when the chunk at `from` and the two after it are downloaded (or the video ends sooner). */
+  const buffered = (from: number): boolean => {
+    const at = library.pieces.findIndex((item) => from >= item.start && from < item.start + item.frames);
+    if (at < 0) return library.complete();
+    return library.pieces.slice(at, at + 3).every((item) => arrived.has(item.start)) && (at + 3 <= library.pieces.length || library.complete() || arrived.has(library.pieces.at(-1)?.start ?? -1));
+  };
   const frames = (piece: Piece): Promise<DecodedChunk> => {
     let pending = cache.get(piece.start);
     if (!pending) {
-      pending = piece.load().then((data) => decodeChunkMotion(info, data));
+      pending = bytes(piece).then((data) => decodeChunkMotion(info, data));
       const key = piece.start;
       pending.catch(() => cache.delete(key));
       cache.set(piece.start, pending);
@@ -620,6 +658,18 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       const half = look.smooth && time * info.fps - index >= 0.5 ? 1 : 0;
       const phase = index * 2 + half;
       const piece = library.pieces.find((item) => index >= item.start && index < item.start + item.frames);
+      prefetch(index);
+      if (playing && !waiting && piece && !arrived.has(piece.start)) {
+        base = time;
+        waiting = true;
+        audio.stop();
+        redraw = true;
+      } else if (waiting && (!playing || buffered(index))) {
+        waiting = false;
+        startedAt = performance.now();
+        if (playing) sound();
+        redraw = true;
+      }
       const line$ = captionAt(cues, time)?.replace(/\s*\n\s*/g, ' ') ?? null;
       if (line$ !== caption) {
         caption = line$;
@@ -682,7 +732,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       const span = pictureWidth >= 60 ? pictureWidth : view.width;
       const offset = pictureWidth >= 60 ? pictureLeft : 0;
       const pause: Segment = { text: playing ? '▌▌' : '▶ ', act: toggle };
-      const time$ = ` ${clock(time)} / ${clock(total())} `;
+      const time$ = ` ${clock(time)} / ${clock(total())}${waiting ? ' loading…' : ''} `;
       const options$: Segment[] = [
         { text: MODES[look.mode]?.[0] ?? '', act: () => (look.mode = (look.mode + 1) % MODES.length) },
         { text: GLYPH_NAMES[look.glyphs] ?? '', act: () => (look.glyphs = (look.glyphs + 1) % GLYPH_SETS.length) },
