@@ -34,6 +34,8 @@ export interface FrameStyle {
   readonly fill?: number;
   /** The pixels are this many times larger than the grid on each side, for example 2 after `upscale2x`. Default 1. */
   readonly detail?: number;
+  /** Dot patterns from a detail stream, one byte per grid cell, drawn exactly in braille mode. */
+  readonly masks?: Uint8Array | null;
 }
 
 const VERTEX = `#version 300 es
@@ -51,6 +53,8 @@ out vec4 color;
 uniform sampler2D cells;
 uniform sampler2D atlas;
 uniform sampler2D overlay;
+uniform sampler2D patterns;
+uniform float detailed;
 uniform vec2 grid;
 uniform float glyphs;
 uniform float brightness;
@@ -105,9 +109,11 @@ void main() {
     vec3 near = texture(cells, (cell + (spot + 0.5) / vec2(2.0, 4.0)) / grid).rgb;
     float nearLevel = leveled(dot(near, WEIGHTS));
     float lit = step(bayer(spot) * 0.75, nearLevel);
+    float pattern = detailed > 0.5 ? floor(texelFetch(patterns, ivec2(cell), 0).r * 255.0 + 0.5) : 0.0;
+    if (pattern > 0.5) lit = mod(floor(pattern / exp2(spot.y * 2.0 + spot.x)), 2.0);
     vec2 inside = (fract(local * vec2(2.0, 4.0)) - 0.5) * vec2(1.2, 1.0);
     ink = lit * smoothstep(0.5, 0.36, length(inside));
-    glyph = min(paint(near, max(level, nearLevel)) * 1.3, vec3(1.0));
+    glyph = min(paint(pattern > 0.5 ? source : near, pattern > 0.5 ? min(1.0, level + 0.35) : max(level, nearLevel)) * 1.3, vec3(1.0));
   } else if (mode == 2) {
     float radius = sqrt(level) * 0.46;
     float distance = length((local - 0.5) * vec2(0.6, 1.0));
@@ -166,6 +172,7 @@ export class GlyphRenderer {
   cellHeight: number;
   private readonly gl: WebGL2RenderingContext;
   private readonly cellsTexture: WebGLTexture;
+  private readonly patternsTexture: WebGLTexture;
   private readonly uniforms: Readonly<Record<string, WebGLUniformLocation | null>>;
   private cols = 0;
   private rows = 0;
@@ -197,15 +204,19 @@ export class GlyphRenderer {
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
 
     this.uniforms = Object.fromEntries(
-      ['cells', 'atlas', 'overlay', 'grid', 'glyphs', 'brightness', 'contrast', 'boost', 'background', 'tint', 'mode', 'edges', 'crt', 'captions', 'fill'].map((name) => [name, gl.getUniformLocation(program, name)]),
+      ['cells', 'atlas', 'overlay', 'grid', 'glyphs', 'brightness', 'contrast', 'boost', 'background', 'tint', 'mode', 'edges', 'crt', 'captions', 'fill', 'patterns', 'detailed'].map((name) => [name, gl.getUniformLocation(program, name)]),
     );
 
     this.cellsTexture = this.texture(0);
     this.texture(1);
     this.texture(2);
+    this.patternsTexture = this.texture(3);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.uniform1i(this.uniforms['cells'] ?? null, 0);
     gl.uniform1i(this.uniforms['atlas'] ?? null, 1);
     gl.uniform1i(this.uniforms['overlay'] ?? null, 2);
+    gl.uniform1i(this.uniforms['patterns'] ?? null, 3);
     this.setGlyphs(this.glyphs);
     this.setBackground(options.background ?? '#05070a');
   }
@@ -329,6 +340,13 @@ export class GlyphRenderer {
     gl.uniform1f(this.uniforms['edges'] ?? null, style.edges ? 1 : 0);
     gl.uniform1f(this.uniforms['crt'] ?? null, style.crt ? 1 : 0);
     gl.uniform1f(this.uniforms['fill'] ?? null, style.fill ?? 0.25);
+    const masks = style.masks && style.masks.length === cols * rows ? style.masks : null;
+    gl.uniform1f(this.uniforms['detailed'] ?? null, masks ? 1 : 0);
+    if (masks) {
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, this.patternsTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, cols, rows, 0, gl.RED, gl.UNSIGNED_BYTE, masks);
+    }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }

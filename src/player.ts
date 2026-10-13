@@ -102,7 +102,7 @@ export class GlyphPlayer extends EventTarget {
   private readonly sampler: OffscreenCanvasRenderingContext2D;
   private loop: number | null = null;
   private shownFrame = -1;
-  private lastFrame: { pixels: Uint8ClampedArray; cols: number; rows: number } | null = null;
+  private lastFrame: { pixels: Uint8ClampedArray; cols: number; rows: number; masks?: Uint8Array | undefined } | null = null;
   private rate = 1;
   private ended = false;
   private mediaClock = false;
@@ -206,7 +206,7 @@ export class GlyphPlayer extends EventTarget {
   }
 
   private redraw(): void {
-    if (this.lastFrame && this.stream) this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
+    if (this.lastFrame && this.stream) this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows, this.lastFrame.masks);
     else this.draw();
   }
 
@@ -564,8 +564,8 @@ export class GlyphPlayer extends EventTarget {
     this.loop = null;
   }
 
-  private paint(pixels: Uint8ClampedArray, cols: number, rows: number): void {
-    this.lastFrame = { pixels, cols, rows };
+  private paint(pixels: Uint8ClampedArray, cols: number, rows: number, masks?: Uint8Array): void {
+    this.lastFrame = { pixels, cols, rows, masks };
     pixels = this.steady(pixels);
     this.levels = this.look.autoLevels ? ease(this.levels, autoLevels(pixels)) : NEUTRAL;
     const caption = captionAt(this.cues, this.currentTime);
@@ -574,7 +574,7 @@ export class GlyphPlayer extends EventTarget {
       this.renderer.setCaption(caption);
     }
     const sharp = this.look.sharp;
-    this.renderer.draw(sharp ? upscale2x(pixels, cols, rows) : pixels, cols, rows, { detail: sharp ? 2 : 1, levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt, fill: this.look.fill });
+    this.renderer.draw(sharp ? upscale2x(pixels, cols, rows) : pixels, cols, rows, { detail: sharp ? 2 : 1, levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt, fill: this.look.fill, masks: masks ?? null });
   }
 
   private steady(pixels: Uint8ClampedArray): Uint8ClampedArray {
@@ -629,7 +629,7 @@ export class GlyphPlayer extends EventTarget {
     const position = stream.chunks.findIndex((chunk) => index >= chunk.start && index < chunk.start + chunk.frames);
     const chunk = stream.chunks[position];
     if (!chunk) {
-      if (this.lastFrame) this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
+      if (this.lastFrame) this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows, this.lastFrame.masks);
       return;
     }
     const nextChunk = stream.chunks[position + 1];
@@ -644,21 +644,22 @@ export class GlyphPlayer extends EventTarget {
           const motion = next.motion[index + 1 - following.start];
           if (!from || !to || !motion) return;
           this.shownFrame = -1;
-          this.paint(interpolate(from, to, motion, info.cols, info.rows, between), info.cols, info.rows);
+          const masks = between < 0.5 ? current.detail?.[index - chunk.start] : next.detail?.[index + 1 - following.start];
+          this.paint(interpolate(from, to, motion, info.cols, info.rows, between), info.cols, info.rows, masks);
         });
         return;
       }
     }
     if (index === this.shownFrame && this.lastFrame) {
-      this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows);
+      this.paint(this.lastFrame.pixels, this.lastFrame.cols, this.lastFrame.rows, this.lastFrame.masks);
       return;
     }
-    void this.decode(stream, info, chunk).then(({ frames }) => {
+    void this.decode(stream, info, chunk).then(({ frames, detail }) => {
       if (this.stream !== stream) return;
       const frame = frames[index - chunk.start];
       if (!frame) return;
       this.shownFrame = index;
-      this.paint(frame, info.cols, info.rows);
+      this.paint(frame, info.cols, info.rows, detail?.[index - chunk.start]);
     });
   }
 

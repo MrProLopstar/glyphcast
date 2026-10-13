@@ -78,6 +78,7 @@ At 160 columns a frame is about nine thousand colored cells, far less than a vid
 
 ```sh
 npx glyphcast encode movie.mp4 --cols 180 --embed --poster    # one file with Opus sound inside, plus movie.jpg
+npx glyphcast encode movie.mp4 --detail                       # 2×4 dot pattern from the source: sharp text in braille, 20–40% larger
 npx glyphcast encode *.mp4 --embed                            # several videos in a row, with progress and time left
 npx glyphcast encode movie.mp4 --cols 180 --audio movie.m4a   # sound as a separate file
 npx glyphcast hub                                               # videos in the gcast hub, watch: npx glyphcast play hub:name

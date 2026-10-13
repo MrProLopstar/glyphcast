@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { audioType, decodeChunk, decodeChunkMotion, Encoder, GlyphcastError, INDEX_TRAILER, indexLength, interpolate, readHeader, readIndex, StreamReader, type Chunk } from '../src/format.js';
+import { audioType, decodeChunk, decodeChunkMotion, detailMasks, Encoder, GlyphcastError, INDEX_TRAILER, indexLength, interpolate, readHeader, readIndex, StreamReader, type Chunk } from '../src/format.js';
 import { captionAt, parseCaptions } from '../src/captions.js';
 import { upscale2x } from '../src/upscale.js';
 import { autoLevels, glyphIndex, luma, NEUTRAL } from '../src/levels.js';
@@ -221,5 +221,36 @@ describe('interpolation', () => {
     const middle = interpolate(frames[0] ?? new Uint8ClampedArray(), frames[1] ?? new Uint8ClampedArray(), motion[1] ?? new Int8Array(), cols, rows, 0.5);
     expect(middle.length).toBe(frames[0]?.length);
     expect(interpolate(frames[0] ?? new Uint8ClampedArray(), frames[1] ?? new Uint8ClampedArray(), motion[1] ?? new Int8Array(), cols, rows, 1)).toEqual(frames[1]);
+  });
+});
+
+describe('detail', () => {
+  it('stores dot patterns and brings them back after motion and changes', async () => {
+    const big = (shift: number): Uint8Array => {
+      const pixels = new Uint8Array(cols * 2 * rows * 4 * 3);
+      for (let y = 0; y < rows * 4; y += 1) for (let x = 0; x < cols * 2; x += 1) if ((x + shift) % 6 < 2 || y % 5 === 0) pixels.fill(230, (y * cols * 2 + x) * 3, (y * cols * 2 + x) * 3 + 3);
+      return pixels;
+    };
+    const encoder = new Encoder({ cols, rows, fps: 10, chunkFrames: 10, detail: true });
+    const sources = [0, 0, 2, 4].map((shift) => detailMasks(big(shift), cols, rows));
+    for (const { cells, masks } of sources) encoder.add(cells, masks);
+    const bytes = await encoder.finish();
+    const header = readHeader(bytes);
+    expect(header.detail).toBe(true);
+    expect(sources[0]?.masks.some((mask) => mask !== 0)).toBe(true);
+    const [chunk] = split(bytes);
+    const decoded = await decodeChunkMotion(header, chunk?.data ?? new Uint8Array());
+    expect(decoded.detail?.[0]).toEqual(sources[0]?.masks);
+    const last = decoded.detail?.[3] ?? new Uint8Array();
+    let wrong = 0;
+    last.forEach((mask, index) => {
+      let diff = mask ^ (sources[3]?.masks[index] ?? 0);
+      while (diff) {
+        wrong += diff & 1;
+        diff >>= 1;
+      }
+    });
+    expect(wrong).toBeLessThan(cols * rows);
+    expect(() => new Encoder({ cols, rows, fps: 10, chunkFrames: 10, detail: true }).add(frame(0))).toThrow(GlyphcastError);
   });
 });

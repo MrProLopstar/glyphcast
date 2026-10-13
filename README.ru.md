@@ -78,6 +78,7 @@ import { GlyphPlayer } from 'glyphcast/vue';
 
 ```sh
 npx glyphcast encode movie.mp4 --cols 180 --embed --poster    # один файл со звуком Opus внутри и постер movie.jpg
+npx glyphcast encode movie.mp4 --detail                       # узор 2×4 точек из исходника: чёткий текст в режиме Брайля, файл больше на 20–40%
 npx glyphcast encode *.mp4 --embed                            # несколько видео подряд, с прогрессом и оставшимся временем
 npx glyphcast encode movie.mp4 --cols 180 --audio movie.m4a   # звук отдельным файлом
 npx glyphcast hub                                               # видео в gcast hub, смотреть: npx glyphcast play hub:имя

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Encoder, GlyphcastError } from './format.js';
+import { detailMasks, Encoder, GlyphcastError } from './format.js';
 
 export interface EncodeVideoOptions {
   /** Grid width in glyphs. Default 160. */
@@ -21,6 +21,8 @@ export interface EncodeVideoOptions {
   readonly ffprobe?: string;
   /** Embed the sound as Opus inside the stream (`encodeVideo` only). Default false. */
   readonly embedAudio?: boolean;
+  /** Store a 2×4 dot pattern per cell from the source, so text and thin lines stay sharp in braille. Default false. */
+  readonly detail?: boolean;
   /** Cut black bars that stay black through the whole video. Default true. */
   readonly crop?: boolean;
   /** Called as frames are encoded with the seconds done and the total, for progress output. */
@@ -101,7 +103,7 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const cropped = area.width !== probed.width || area.height !== probed.height ? `crop=${area.width}:${area.height}:${area.x}:${area.y},` : '';
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
   let frames = 0;
-  const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
+  const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), detail: options.detail ?? false, ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
   if (options.embedAudio && (await hasAudio(input, options.ffprobe))) {
     const temp = mkdtempSync(join(tmpdir(), 'glyphcast-'));
     try {
@@ -111,12 +113,17 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
       rmSync(temp, { recursive: true, force: true });
     }
   }
-  const frameSize = cols * rows * 3;
+  const detail = options.detail ?? false;
+  const frameSize = cols * rows * 3 * (detail ? 8 : 1);
+  const scale = detail ? `${cols * 2}:${rows * 4}` : `${cols}:${rows}`;
   let pending: Buffer = Buffer.alloc(0);
-  await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-i', input, '-an', '-vf', `${cropped}fps=${fps},scale=${cols}:${rows}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], (chunk) => {
+  await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', '-i', input, '-an', '-vf', `${cropped}fps=${fps},scale=${scale}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], (chunk) => {
     pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
     while (pending.length >= frameSize) {
-      encoder.add(pending.subarray(0, frameSize));
+      if (detail) {
+        const { cells, masks } = detailMasks(pending.subarray(0, frameSize), cols, rows);
+        encoder.add(cells, masks);
+      } else encoder.add(pending.subarray(0, frameSize));
       pending = pending.subarray(frameSize);
       frames += 1;
       if (frames % fps === 0) options.onProgress?.(frames / fps, duration);

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.0
+
+- `--detail` stores a 2×4 dot pattern per cell taken from the source; braille draws it exactly, so on-screen text and thin lines stay readable. Files grow by about 20–40%. `detailMasks()` builds the patterns. Players before 0.16 refuse such files
+- Terminal player: holding an arrow key no longer keeps seeking after release; sound restarts once seeking settles
+
 ## 0.15.1
 
 - Terminal player: the play button shows the action, pause bars while playing and a play triangle when paused

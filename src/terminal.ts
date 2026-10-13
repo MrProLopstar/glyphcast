@@ -54,6 +54,8 @@ export interface AnsiOptions {
   readonly tint?: string | null;
   /** How much each cell's background takes its color, 0 for none. Default 0. */
   readonly fill?: number;
+  /** Dot patterns of a detail stream on its own grid, drawn exactly in braille mode. */
+  readonly detail?: { readonly masks: Uint8Array; readonly cols: number; readonly rows: number } | undefined;
   /** Height of a terminal cell divided by its width. Default 2.25. */
   readonly cellRatio?: number;
 }
@@ -145,6 +147,13 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
           color = paint(lights, Math.min(1, level(lights) + 0.15)).map((value) => value * 1.15) as [number, number, number];
           const shade = off[3] ? mean(off) : center;
           back = paint(shade, level(shade)).map((value) => value * fill);
+          const grid = options.detail;
+          const pattern = grid ? (grid.masks[Math.min(grid.rows - 1, Math.floor(((y + 0.5) / height) * grid.rows)) * grid.cols + Math.min(grid.cols - 1, Math.floor(((x + 0.5) / width) * grid.cols))] ?? 0) : 0;
+          if (pattern) {
+            bits = 0;
+            for (let dot = 0; dot < 8; dot += 1) if ((pattern >> dot) & 1) bits |= 1 << (BRAILLE[(dot & 1) * 4 + (dot >> 1)] ?? 0);
+            color = paint(center, Math.min(1, lit + 0.35)).map((value) => value * 1.15) as [number, number, number];
+          }
           char = String.fromCharCode(0x2800 + bits);
         } else {
           char = glyphs[Math.min(glyphs.length - 1, Math.floor(lit * glyphs.length))] ?? ' ';
@@ -587,6 +596,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         const next = library.pieces.find((item) => item.start === piece.start + piece.frames);
         if (next) void frames(next).catch(() => undefined);
         let frame = decoded?.frames[index - piece.start];
+        const masks = decoded?.detail?.[index - piece.start];
         if (frame && half) {
           const following = index + 1 < piece.start + piece.frames ? decoded : next && cache.has(next.start) ? await frames(next).catch(() => null) : null;
           const at = index + 1 - (following === decoded ? piece.start : (next?.start ?? 0));
@@ -618,6 +628,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
             boost: look.boost,
             fill: FILLS[look.fill] ?? 0,
             cellRatio,
+            detail: masks ? { masks, cols: info.cols, rows: info.rows } : undefined,
           });
           if (!output.write(text.split('\n').map((line, row) => `\x1b[${top + row + 1};${left + 1}H${line}`).join(''))) await new Promise((resolve) => output.once('drain', resolve));
           if (caption) {

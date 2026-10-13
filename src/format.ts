@@ -24,6 +24,8 @@ export interface StreamInfo {
   readonly frameCount: number;
   /** Brightness steps (of 63) a cell may drift before it is sent again. Higher means smaller streams. Default 3. */
   readonly threshold: number;
+  /** Frames carry a 2×4 dot pattern per cell taken from the source, for sharp text and lines. */
+  readonly detail?: boolean;
 }
 
 export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshold'> {
@@ -206,7 +208,7 @@ export const writeHeader = (info: StreamInfo): Uint8Array => {
   const view = new DataView(out.buffer);
   view.setUint32(0, MAGIC, true);
   view.setUint8(4, VERSION);
-  view.setUint8(5, info.threshold);
+  view.setUint8(5, info.threshold | (info.detail ? 128 : 0));
   view.setUint16(6, info.cols, true);
   view.setUint16(8, info.rows, true);
   view.setFloat32(10, info.fps, true);
@@ -228,7 +230,8 @@ export const readHeader = (bytes: Uint8Array): StreamInfo => {
     fps: view.getFloat32(10, true),
     chunkFrames: view.getUint16(14, true),
     frameCount: view.getUint32(16, true),
-    threshold: view.getUint8(5),
+    threshold: view.getUint8(5) & 127,
+    detail: (view.getUint8(5) & 128) !== 0,
   };
   validate(info);
   return info;
@@ -314,9 +317,10 @@ export class Encoder {
   private queue: Promise<void> = Promise.resolve();
   private readonly finished: Uint8Array[] = [];
   private readonly lateAudio: Uint8Array[] = [];
+  private masks: Uint8Array = new Uint8Array(0);
 
   constructor(options: EncodeOptions, private readonly onChunk?: (bytes: Uint8Array) => void) {
-    this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0, threshold: options.threshold ?? 3 };
+    this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0, threshold: options.threshold ?? 3, detail: options.detail ?? false };
     validate(this.info);
     this.shape = layout(options.cols, options.rows);
     this.steps = steps(this.info.threshold);
@@ -341,8 +345,11 @@ export class Encoder {
     else for (const piece of pieces) this.emit(piece);
   }
 
-  /** Adds a frame of `cols × rows` pixels, 3 or 4 bytes per pixel. */
-  add(pixels: Uint8Array | Uint8ClampedArray): void {
+  /**
+   * Adds a frame of `cols × rows` pixels, 3 or 4 bytes per pixel. Streams with `detail` also take one byte per cell:
+   * bit `y * 2 + x` is set where the cell's 2×4 sub-pixel is brighter than the cell, see `detailMasks`.
+   */
+  add(pixels: Uint8Array | Uint8ClampedArray, masks?: Uint8Array): void {
     const shape = this.shape;
     const cells = shape.cols * shape.rows;
     const stride = pixels.length / cells;
@@ -414,6 +421,13 @@ export class Encoder {
     }
     this.state = next;
     this.parts.push(new Uint8Array([key ? 0 : 1]), modes, residuals.y.slice(0, counts.y), residuals.u.slice(0, counts.u), residuals.v.slice(0, counts.v));
+    if (this.info.detail) {
+      if (!masks || masks.length !== cells) throw new GlyphcastError(`A detail stream needs ${cells} pattern bytes per frame`);
+      const reference = key || this.masks.length !== cells ? new Uint8Array(cells) : this.masks;
+      const { flags, explicit, next: patterns } = encodeMasks(shape, modes, reference, masks, key);
+      this.masks = patterns;
+      this.parts.push(flags, explicit);
+    }
     this.frames += 1;
     this.inChunk += 1;
     if (this.inChunk === this.info.chunkFrames) this.flush();
@@ -509,21 +523,25 @@ export const audioType = (bytes: Uint8Array): string => {
 };
 
 /** Decodes one chunk payload into RGBA frames (`cols × rows × 4` bytes each), ready to upload as a texture. */
-export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold'>, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => (await decodeChunkMotion(info, compressed)).frames;
+export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold' | 'detail'>, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => (await decodeChunkMotion(info, compressed)).frames;
 
 /** Decoded frames with the motion of every 8×4 block (dx, dy in cells per block), for interpolating between frames. */
 export interface DecodedChunk {
   readonly frames: Uint8ClampedArray[];
   readonly motion: Int8Array[];
+  /** Dot patterns per cell for detail streams. */
+  readonly detail?: Uint8Array[];
 }
 
 /** Like `decodeChunk`, and also returns where each block of each frame came from in the previous one. */
-export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold'>, compressed: Uint8Array): Promise<DecodedChunk> => {
+export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold' | 'detail'>, compressed: Uint8Array): Promise<DecodedChunk> => {
   const raw = await inflate(compressed);
   const shape = layout(info.cols, info.rows);
   const { size } = steps(info.threshold);
   const frames: Uint8ClampedArray[] = [];
   const motion: Int8Array[] = [];
+  const detail: Uint8Array[] = [];
+  let patterns = new Uint8Array(info.cols * info.rows);
   let state = planes(shape);
   let at = 0;
   while (at < raw.length) {
@@ -577,8 +595,109 @@ export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' |
     state = next;
     frames.push(toPixels(state, shape));
     motion.push(vectors);
+    if (info.detail) {
+      const flags = raw.subarray(at, at + Math.ceil(shape.blocks / 8));
+      at += flags.length;
+      const reference = type === 0 ? new Uint8Array(patterns.length) : patterns;
+      const masks = new Uint8Array(patterns.length);
+      for (let block = 0; block < shape.blocks; block += 1) {
+        const explicit = ((flags[block >> 3] ?? 0) >> (block & 7)) & 1;
+        const [dx, dy] = blockVector(modes[block] ?? 0);
+        blockCells(shape, block, (index, x, y) => {
+          if (explicit) {
+            masks[index] = raw[at] ?? 0;
+            at += 1;
+          } else masks[index] = reference[clampTo(y + dy, shape.rows) * shape.cols + clampTo(x + dx, shape.cols)] ?? 0;
+        });
+      }
+      if (at > raw.length) throw new GlyphcastError('Truncated frame');
+      patterns = masks;
+      detail.push(masks);
+    }
   }
-  return { frames, motion };
+  return info.detail ? { frames, motion, detail } : { frames, motion };
+};
+
+const blockCells = (shape: Layout, block: number, each: (index: number, x: number, y: number) => void): void => {
+  const bx = (block % shape.blocksX) * BLOCK_W;
+  const by = Math.floor(block / shape.blocksX) * BLOCK_H;
+  for (let y = by; y < Math.min(by + BLOCK_H, shape.rows); y += 1) for (let x = bx; x < Math.min(bx + BLOCK_W, shape.cols); x += 1) each(y * shape.cols + x, x, y);
+};
+
+const blockVector = (mode: number): readonly [number, number] => (mode === UNIFORM ? [0, 0] : (VECTORS[mode & ~RESIDUAL] ?? [0, 0]));
+
+const bits = (value: number): number => {
+  let count = 0;
+  for (let rest = value; rest; rest >>= 1) count += rest & 1;
+  return count;
+};
+
+const encodeMasks = (shape: Layout, modes: Uint8Array, reference: Uint8Array, masks: Uint8Array, key: boolean): { flags: Uint8Array; explicit: Uint8Array; next: Uint8Array } => {
+  const flags = new Uint8Array(Math.ceil(shape.blocks / 8));
+  const explicit: number[] = [];
+  const next = new Uint8Array(masks.length);
+  for (let block = 0; block < shape.blocks; block += 1) {
+    const [dx, dy] = blockVector(modes[block] ?? 0);
+    let changed = 0;
+    blockCells(shape, block, (index, x, y) => {
+      const derived = reference[clampTo(y + dy, shape.rows) * shape.cols + clampTo(x + dx, shape.cols)] ?? 0;
+      next[index] = derived;
+      changed += bits(derived ^ (masks[index] ?? 0));
+    });
+    if (key || changed > 12) {
+      flags[block >> 3] = (flags[block >> 3] ?? 0) | (1 << (block & 7));
+      blockCells(shape, block, (index) => {
+        next[index] = masks[index] ?? 0;
+        explicit.push(masks[index] ?? 0);
+      });
+    }
+  }
+  return { flags, explicit: Uint8Array.from(explicit), next };
+};
+
+/**
+ * Dot patterns for a detail stream from a frame at twice the width and four times the height of the grid, RGB or
+ * RGBA: one byte per cell, bit `y * 2 + x` set where that sub-pixel is clearly brighter than the cell's average.
+ * Flat cells get 0, so players fall back to their usual drawing there.
+ */
+export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number, rows: number, stride = 3): { readonly cells: Uint8ClampedArray; readonly masks: Uint8Array } => {
+  const width = cols * 2;
+  const cells = new Uint8ClampedArray(cols * rows * 4);
+  const masks = new Uint8Array(cols * rows);
+  const lumas = new Float32Array(8);
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let low = 255;
+      let high = 0;
+      for (let dot = 0; dot < 8; dot += 1) {
+        const at = ((row * 4 + (dot >> 1)) * width + col * 2 + (dot & 1)) * stride;
+        const pr = pixels[at] ?? 0;
+        const pg = pixels[at + 1] ?? 0;
+        const pb = pixels[at + 2] ?? 0;
+        r += pr;
+        g += pg;
+        b += pb;
+        const luma = pr * 0.299 + pg * 0.587 + pb * 0.114;
+        lumas[dot] = luma;
+        low = Math.min(low, luma);
+        high = Math.max(high, luma);
+      }
+      const cell = row * cols + col;
+      cells[cell * 4] = r / 8;
+      cells[cell * 4 + 1] = g / 8;
+      cells[cell * 4 + 2] = b / 8;
+      cells[cell * 4 + 3] = 255;
+      if (high - low < 80) continue;
+      const middle = (high + low) / 2;
+      let mask = 0;
+      for (let dot = 0; dot < 8; dot += 1) if ((lumas[dot] ?? 0) > middle) mask |= 1 << dot;
+      masks[cell] = mask;
+    }
+  }
+  return { cells, masks };
 };
 
 /**
