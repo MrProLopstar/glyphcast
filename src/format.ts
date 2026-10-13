@@ -34,6 +34,8 @@ export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshol
   readonly threshold?: number;
   /** Total frames if known in advance, written to the header. Default 0 (unknown). */
   readonly frameCount?: number;
+  /** Raw deflate for chunks; Node passes zlib at level 9, which is a few percent smaller. Default CompressionStream. */
+  readonly compress?: (data: Uint8Array) => Promise<Uint8Array>;
 }
 
 export interface Chunk {
@@ -327,9 +329,11 @@ export class Encoder {
   private readonly lateAudio: Uint8Array[] = [];
   private subtitles: Uint8Array | null = null;
   private masks: Uint8Array = new Uint8Array(0);
+  private readonly compress: EncodeOptions['compress'];
 
   constructor(options: EncodeOptions, private readonly onChunk?: (bytes: Uint8Array) => void) {
     this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0, threshold: options.threshold ?? 3, detail: options.detail ?? false };
+    this.compress = options.compress;
     validate(this.info);
     this.shape = layout(options.cols, options.rows);
     this.steps = steps(this.info.threshold);
@@ -462,7 +466,7 @@ export class Encoder {
     this.chunkStart += this.inChunk;
     this.parts = [];
     this.inChunk = 0;
-    const compressed = deflate(raw);
+    const compressed = (this.compress ?? deflate)(raw);
     this.queue = this.queue.then(async () => this.emit(frameChunk({ ...chunk, data: await compressed })));
   }
 

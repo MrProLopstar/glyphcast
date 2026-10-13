@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.7
+
+- Smaller files from `encode`: chunks are deflated at level 9 and embedded Opus defaults to 40 kbit/s (about 10% smaller overall)
+
 ## 0.19.6
 
 - `--detail`: patterned cells take the color of their bright dots and fainter lines get patterns, so thin titles stay readable (re-encode to use it)
