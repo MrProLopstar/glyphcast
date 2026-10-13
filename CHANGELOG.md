@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.0
+
+- Seek bar thumbnails: hovering the bar shows the frame there, fetched by range request when that part is not loaded yet. `player.preview(seconds)` returns it
+
 ## 0.17.0
 
 - Encoding embeds the first text subtitle track of the video (mkv, mp4); players in the browser and the terminal show it without a separate file. `Encoder.addSubtitles()` adds any WebVTT or SRT

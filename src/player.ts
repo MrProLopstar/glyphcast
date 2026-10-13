@@ -108,6 +108,7 @@ export class GlyphPlayer extends EventTarget {
   private mediaClock = false;
   private stalled = false;
   private cues: readonly Cue[] = [];
+  private readonly previews = new Map<number, { readonly pixels: Uint8ClampedArray; readonly cols: number; readonly rows: number }>();
   private previous: Uint8ClampedArray | null = null;
   private caption: string | null = null;
 
@@ -327,6 +328,37 @@ export class GlyphPlayer extends EventTarget {
     }
   }
 
+  /**
+   * A small picture of the stream at a time, for seek bar previews: the key frame of the chunk there, decoded from
+   * memory or fetched with a range request when the file has an index. Null for videos and unreachable places.
+   */
+  async preview(seconds: number): Promise<{ readonly pixels: Uint8ClampedArray; readonly cols: number; readonly rows: number } | null> {
+    const stream = this.stream;
+    const info = stream?.reader.info;
+    if (!stream || !info) return null;
+    const frame = Math.max(0, Math.floor((seconds - stream.offset) * info.fps));
+    const loaded = stream.chunks.find((chunk) => frame >= chunk.start && frame < chunk.start + chunk.frames);
+    if (loaded) {
+      const { frames } = await this.decode(stream, info, loaded);
+      return frames[0] ? { pixels: frames[0], cols: info.cols, rows: info.rows } : null;
+    }
+    const entry = stream.index?.find((item) => frame >= item.start && frame < item.start + item.frames);
+    if (!entry) return null;
+    const cached = this.previews.get(entry.start);
+    if (cached) return cached;
+    const head = await fetch(stream.url, { headers: { range: `bytes=${entry.offset}-${entry.offset + 5}` } });
+    if (head.status !== 206) return null;
+    const size = new DataView(await head.arrayBuffer()).getUint32(0, true);
+    const body = await fetch(stream.url, { headers: { range: `bytes=${entry.offset + 6}-${entry.offset + 5 + size}` } });
+    if (body.status !== 206) return null;
+    const { frames } = await decodeChunkMotion(info, new Uint8Array(await body.arrayBuffer()));
+    if (!frames[0]) return null;
+    const picture = { pixels: frames[0], cols: info.cols, rows: info.rows };
+    this.previews.set(entry.start, picture);
+    if (this.previews.size > 40) this.previews.delete(this.previews.keys().next().value ?? 0);
+    return picture;
+  }
+
   private async jump(state: StreamState, frame: number): Promise<void> {
     const entry = state.index?.find((item) => frame >= item.start && frame < item.start + item.frames);
     const info = state.reader.info;
@@ -367,6 +399,7 @@ export class GlyphPlayer extends EventTarget {
 
   private unload(): void {
     this.pauseLoop();
+    this.previews.clear();
     this.previous = null;
     this.stalled = false;
     this.mediaClock = false;

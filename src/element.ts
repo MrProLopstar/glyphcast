@@ -56,6 +56,8 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .played { background: var(--accent); }
 .knob { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: var(--ink); box-shadow: 0 1px 6px rgba(0,0,0,0.5); transform: scale(0); transition: transform 0.15s; }
 .progress:hover .knob { transform: scale(1); }
+.thumb { position: absolute; bottom: 48px; width: 160px; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.6); transform: translateX(-50%); opacity: 0; pointer-events: none; image-rendering: auto; }
+.progress:hover .thumb.ready { opacity: 1; }
 .tip { position: absolute; bottom: 22px; padding: 3px 7px; border-radius: 6px; background: var(--panel); font: 12px ui-monospace, Consolas, monospace; transform: translateX(-50%); opacity: 0; pointer-events: none; }
 .progress:hover .tip { opacity: 1; }
 .row { display: flex; align-items: center; gap: 2px; margin-top: 4px; }
@@ -135,6 +137,7 @@ export class GlyphPlayerElement extends HTMLElement {
   private pipWindow: Window | null = null;
   private pipVideo: HTMLVideoElement | null = null;
   private loading = 0;
+  private previewTicket = 0;
 
   constructor() {
     super();
@@ -149,7 +152,7 @@ export class GlyphPlayerElement extends HTMLElement {
   <div class="message" role="alert"></div>
   <div class="menu" role="menu"></div>
   <div class="controls" part="controls">
-    <div class="progress" role="slider" aria-label="Seek" tabindex="-1"><div class="track"><div class="buffer"></div><div class="played"></div><div class="knob"></div></div><div class="tip">0:00</div></div>
+    <div class="progress" role="slider" aria-label="Seek" tabindex="-1"><div class="track"><div class="buffer"></div><div class="played"></div><div class="knob"></div></div><canvas class="thumb"></canvas><div class="tip">0:00</div></div>
     <div class="row">
       <button class="play" aria-label="Play">${icon(ICONS.play)}</button>
       <button class="back" aria-label="Back 10 seconds">${icon(ICONS.back)}</button>
@@ -344,6 +347,7 @@ export class GlyphPlayerElement extends HTMLElement {
       const value = share(event);
       tip.textContent = clock(value * player.duration);
       tip.style.left = `${value * 100}%`;
+      this.thumbnail(value * player.duration, value);
       if (this.seeking) this.paintProgress(value);
     });
     progress.addEventListener('pointerdown', (event) => {
@@ -406,6 +410,22 @@ export class GlyphPlayerElement extends HTMLElement {
     this.idleTimer = window.setTimeout(() => {
       if (!this.player.paused && !this.$('.menu').classList.contains('on')) this.frame.classList.add('idle');
     }, delay);
+  }
+
+  private thumbnail(seconds: number, share: number): void {
+    const canvas = this.$('.thumb') as HTMLCanvasElement;
+    const box = this.$('.progress').getBoundingClientRect();
+    canvas.style.left = `${Math.min(Math.max(share * box.width, 84), box.width - 84)}px`;
+    const ticket = (this.previewTicket += 1);
+    void this.player.preview(seconds).then((picture) => {
+      if (ticket !== this.previewTicket) return;
+      canvas.classList.toggle('ready', Boolean(picture));
+      if (!picture) return;
+      canvas.width = picture.cols;
+      canvas.height = picture.rows;
+      canvas.style.height = `${(160 * picture.rows) / (picture.cols * 0.6)}px`;
+      canvas.getContext('2d')?.putImageData(new ImageData(new Uint8ClampedArray(picture.pixels), picture.cols, picture.rows), 0, 0);
+    }).catch(() => canvas.classList.remove('ready'));
   }
 
   private paintProgress(share: number): void {
