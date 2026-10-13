@@ -163,7 +163,8 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
             const own = luma(center[0] ?? 0, center[1] ?? 0, center[2] ?? 0);
             const darker = around.filter((item) => luma(item[0] ?? 0, item[1] ?? 0, item[2] ?? 0) < own - 0.04);
             const dark = darker.length ? [0, 1, 2].map((c) => darker.reduce((sum, item) => sum + (item[c] ?? 0), 0) / darker.length) : center.map((value) => value * 0.5);
-            back = paint(dark, level(dark)).map((value) => value * fill);
+            // the dark side shows in full, not dimmed like a background: no black outline at edges
+            back = paint(dark, level(dark));
           }
           char = String.fromCharCode(0x2800 + bits);
         } else {
@@ -447,20 +448,27 @@ const sounds = (audio: AudioSource | null, total: () => number, ffplay: string):
       let from = 0;
       let actual = at;
       if (ogg && at > 0.5) {
-        const guess = Math.floor((at / Math.max(total(), 0.001)) * audio.size);
-        const window = await audio.read(guess, 65536);
-        const page = pages(window)[0];
-        if (page !== undefined && page + 27 < window.length) {
+        // guess the byte position from the time; when the page found there starts after `at`, step back and look again
+        let guess = Math.floor((at / Math.max(total(), 0.001)) * audio.size);
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const window = await audio.read(guess, 65536);
+          const page = pages(window)[0];
+          if (page === undefined || page + 27 >= window.length) break;
           const view = new DataView(window.buffer, window.byteOffset);
           const granule = Number(view.getBigInt64(page + 6, true));
           const segments = window.subarray(page + 27, page + 27 + (window[page + 26] ?? 0));
           const packets = segments.filter((value) => value < 255).length;
           actual = Math.max(0, (granule - ogg.preskip) / 48000 - packets * 0.02);
           from = guess + page;
+          if (actual <= at || guess === 0) break;
+          guess = Math.max(0, guess - Math.ceil(((actual - at + 2) / Math.max(total(), 0.001)) * audio.size));
         }
       }
       if (current !== session) return actual;
-      const ss = !ogg && at > 0.5 ? ['-ss', at.toFixed(2)] : [];
+      // the page found by guessing starts a bit before `at`; ffplay skips the difference, so sound and picture meet at `at`
+      const skip = ogg ? Math.max(0, at - actual) : at;
+      const ss = skip > 0.05 && (ogg || at > 0.5) ? ['-ss', skip.toFixed(2)] : [];
+      actual = ogg && from > 0 ? at : actual;
       const started = spawn(ffplay, ['-nodisp', '-autoexit', '-loglevel', 'quiet', ...ss, '-i', 'pipe:0'], { stdio: ['pipe', 'ignore', 'ignore'] });
       child = started;
       started.on('error', () => (missing = true));

@@ -105,6 +105,7 @@ void main() {
   vec3 glyph = paint(source, level);
   float ink;
   vec3 under = glyph * 0.5;
+  vec3 dark = source;
   if (mode == 1) {
     vec2 spot = floor(local * vec2(2.0, 4.0));
     vec3 near = texture(cells, (cell + (spot + 0.5) / vec2(2.0, 4.0)) / grid).rgb;
@@ -125,12 +126,21 @@ void main() {
         sum += beside * weight;
         count += weight;
       }
-      vec3 dark = count > 0.0 ? sum / count : source * 0.5;
+      dark = count > 0.0 ? sum / count : source * 0.5;
       under = paint(dark, leveled(dot(dark, WEIGHTS))) * 0.5;
     }
     vec2 inside = (fract(local * vec2(2.0, 4.0)) - 0.5) * vec2(1.2, 1.0);
-    ink = lit * smoothstep(0.5, 0.36, length(inside));
-    glyph = min(paint(pattern > 0.5 ? source : near, pattern > 0.5 ? level : max(level, nearLevel)) * 1.3, vec3(1.0));
+    float shape = smoothstep(0.5, 0.36, length(inside));
+    if (pattern > 0.5) {
+      // every dot of a patterned cell is drawn: the bright ones in the cell's color, the others in the darker side's,
+      // so an edge between a dark and a bright area keeps both and gets no black outline
+      ink = shape;
+      vec3 tone = lit > 0.5 ? source : dark;
+      glyph = min(paint(tone, leveled(dot(tone, WEIGHTS))) * 1.3, vec3(1.0));
+    } else {
+      ink = lit * shape;
+      glyph = min(paint(near, max(level, nearLevel)) * 1.3, vec3(1.0));
+    }
   } else if (mode == 2) {
     float radius = sqrt(level) * 0.46;
     float distance = length((local - 0.5) * vec2(0.6, 1.0));

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.3
+
+- Patterned cells draw all eight dots, the dark ones in the color of the darker side: no black outline around people against a bright background
+- Terminal: sound restarts exactly where the picture is after a seek or a pause for loading, no jump 10 s back
+
 ## 0.20.2
 
 - Terminal: the next 30 s of a remote video are fetched ahead; on a slow connection playback pauses with "loading…" instead of skipping
