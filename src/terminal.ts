@@ -55,7 +55,7 @@ export interface AnsiOptions {
   /** How much each cell's background takes its color, 0 for none. Default 0. */
   readonly fill?: number;
   /** Dot patterns of a detail stream on its own grid, drawn exactly in braille mode. */
-  readonly detail?: { readonly masks: Uint8Array; readonly cols: number; readonly rows: number } | undefined;
+  readonly detail?: { readonly masks: Uint8Array; readonly cols: number; readonly rows: number; readonly pixels?: Uint8ClampedArray } | undefined;
   /** Height of a terminal cell divided by its width. Default 2.25. */
   readonly cellRatio?: number;
 }
@@ -148,7 +148,8 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
           const shade = off[3] ? mean(off) : center;
           back = paint(shade, level(shade)).map((value) => value * fill);
           const grid = options.detail;
-          const pattern = grid ? (grid.masks[Math.min(grid.rows - 1, Math.floor(((y + 0.5) / height) * grid.rows)) * grid.cols + Math.min(grid.cols - 1, Math.floor(((x + 0.5) / width) * grid.cols))] ?? 0) : 0;
+          const cell = grid ? Math.min(grid.rows - 1, Math.floor(((y + 0.5) / height) * grid.rows)) * grid.cols + Math.min(grid.cols - 1, Math.floor(((x + 0.5) / width) * grid.cols)) : 0;
+          const pattern = grid ? (grid.masks[cell] ?? 0) : 0;
           // one color per cell here, so patterns are kept only for thin bright lines (up to 4 lit dots): wide bright halves
           // would light the whole cell and stand out from the sparse dots around them
           let lit$ = 0;
@@ -175,7 +176,10 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
           if (pattern && lit$ <= 4) {
             bits = 0;
             for (let dot = 0; dot < 8; dot += 1) if ((pattern >> dot) & 1) bits |= 1 << (BRAILLE[(dot & 1) * 4 + (dot >> 1)] ?? 0);
-            color = paint(center, lit).map((value) => value * 1.15) as [number, number, number];
+            // the stored color of a patterned cell is its bright dots: take it from the frame itself, not from the
+            // smoothed and upscaled picture, where thin bright letters blur into their dark surroundings
+            const own = grid?.pixels ? [grid.pixels[cell * 4] ?? 0, grid.pixels[cell * 4 + 1] ?? 0, grid.pixels[cell * 4 + 2] ?? 0] : center;
+            color = paint(own, Math.min(1, level(own) + 0.1)).map((value) => value * 1.15) as [number, number, number];
             const dark = darkSide();
             // the dark side shows about as bright as a dotted cell of that color looks: no black outline, no bright block
             back = paint(dark, level(dark)).map((value) => value * Math.max(fill, 0.55));
@@ -747,7 +751,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
             boost: look.boost,
             fill: FILLS[look.fill] ?? 0,
             cellRatio,
-            detail: masks ? { masks, cols: info.cols, rows: info.rows } : undefined,
+            detail: masks ? { masks, cols: info.cols, rows: info.rows, pixels: shown$ } : undefined,
           });
           if (!output.write(text.split('\n').map((line, row) => `\x1b[${top + row + 1};${left + 1}H${line}`).join(''))) await new Promise((resolve) => output.once('drain', resolve));
           if (caption) {

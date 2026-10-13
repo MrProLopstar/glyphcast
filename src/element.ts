@@ -314,6 +314,53 @@ export class GlyphPlayerElement extends HTMLElement {
     image.classList.toggle('gone', !show || !url);
   }
 
+  private sessionAt = 0;
+
+  /**
+   * Tells the system about the playback: the title and poster in the Windows media flyout and the phone's
+   * notification, and the play, pause, seek and track keys of keyboards, headsets and lock screens.
+   * Systems show it while the page plays sound.
+   */
+  private mediaSession(position = false): void {
+    const session = typeof navigator === 'undefined' ? undefined : navigator.mediaSession;
+    if (!session) return;
+    const player = this.player;
+    if (position) {
+      // the position is reported a few times a second at most
+      const now = performance.now();
+      if (now - this.sessionAt < 1000) return;
+      this.sessionAt = now;
+    } else {
+      const title = this.getAttribute('heading') ?? document.title;
+      const poster = this.getAttribute('poster');
+      session.metadata = new MediaMetadata({ title, artist: 'glyphcast', ...(poster ? { artwork: [{ src: new URL(poster, location.href).href, sizes: '960x540', type: 'image/jpeg' }] } : {}) });
+      const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
+        ['play', () => void player.play().catch(() => undefined)],
+        ['pause', () => player.pause()],
+        ['stop', () => player.pause()],
+        ['seekbackward', (details) => void player.seek(Math.max(0, player.currentTime - (details.seekOffset ?? 10)))],
+        ['seekforward', (details) => void player.seek(Math.min(player.duration, player.currentTime + (details.seekOffset ?? 10)))],
+        ['seekto', (details) => details.seekTime !== undefined && void player.seek(details.seekTime)],
+      ];
+      for (const [action, handler] of handlers) {
+        try {
+          session.setActionHandler(action, handler);
+        } catch {
+          // older browsers do not know every action
+        }
+      }
+    }
+    session.playbackState = player.paused ? 'paused' : 'playing';
+    const duration = player.duration;
+    if (Number.isFinite(duration) && duration > 0) {
+      try {
+        session.setPositionState({ duration, position: Math.min(duration, Math.max(0, player.currentTime)), playbackRate: player.playbackRate || 1 });
+      } catch {
+        // a position outside the duration while a stream grows
+      }
+    }
+  }
+
   /** The title in the top left corner: a server video's own title, else the `heading` attribute, with a link to `source`. */
   private badge(text: string | null): void {
     const badge = this.$('.badge');
@@ -424,6 +471,9 @@ export class GlyphPlayerElement extends HTMLElement {
     player.addEventListener('waiting', () => this.frame.classList.add('waiting'));
     player.addEventListener('playing', () => this.frame.classList.remove('waiting'));
     player.addEventListener('play', () => this.poster(false));
+    player.addEventListener('play', () => this.mediaSession());
+    player.addEventListener('pause', () => this.mediaSession());
+    player.addEventListener('timeupdate', () => this.mediaSession(true));
     player.addEventListener('timeupdate', () => player.currentTime > 0.05 && this.poster(false));
     player.addEventListener('error', (event) => this.message(String((event as CustomEvent<Error>).detail?.message ?? 'Playback error')));
     player.addEventListener('ended', () => {

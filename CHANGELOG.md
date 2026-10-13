@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.21.1
+
+- The player tells the system about playback (Media Session): title and poster in the Windows media flyout and phone notifications, media keys, headsets and lock screens pause, play and seek
+- Terminal: thin bright letters in patterned cells take their color from the frame itself, readable titles with sharp ×2 on
+
 ## 0.21.0
 
 - License changed to Apache 2.0 (with a NOTICE file); versions up to 0.20.13 stay under MIT
