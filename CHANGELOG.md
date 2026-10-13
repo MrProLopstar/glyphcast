@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.3
+
+- Terminal: the status bar no longer scrolls the screen when it fills the last column
+
 ## 0.19.2
 
 - Short command `glc`, the same as `glyphcast`

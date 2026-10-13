@@ -170,7 +170,7 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
 };
 
 const screen = (output: NodeJS.WriteStream): { width: number; height: number; readonly close: () => void } => {
-  output.write('\x1b[?1049h\x1b[?25l');
+  output.write('\x1b[?1049h\x1b[?25l\x1b[?7l');
   const view = { width: output.columns || 120, height: Math.max(1, (output.rows || 40) - 1), close: () => undefined as void };
   const resize = (): void => {
     view.width = output.columns || view.width;
@@ -183,7 +183,7 @@ const screen = (output: NodeJS.WriteStream): { width: number; height: number; re
     if (closed) return;
     closed = true;
     output.off('resize', resize);
-    output.write('\x1b[0m\x1b[?25h\x1b[?1049l');
+    output.write('\x1b[0m\x1b[?25h\x1b[?7h\x1b[?1049l');
   };
   process.once('exit', view.close);
   process.once('SIGINT', () => {
