@@ -256,6 +256,7 @@ export class GlyphPlayer extends EventTarget {
     } else {
       this.media.removeAttribute('src');
     }
+    if (!urls.audio && offset === 0 && !source.restart && !urls.src.startsWith('blob:') && (await this.openIndexed(state))) return;
     const response = await fetch(urls.src, { signal: state.segment.signal, priority: 'low' } as RequestInit);
     if (!response.ok || !response.body) throw new GlyphcastError(`Cannot load ${urls.src}: HTTP ${response.status}`);
     await new Promise<void>((resolve, reject) => {
@@ -284,6 +285,83 @@ export class GlyphPlayer extends EventTarget {
     this.emit('durationchange');
     this.draw();
     if (!state.done && !source.restart && !urls.src.startsWith('blob:')) void this.loadIndex(state);
+  }
+
+  /**
+   * Starts a file that has an index without reading it from the top: embedded sound sits before the picture, and a
+   * film's sound can be tens of megabytes. The picture is fetched from its first chunk right away and plays on its
+   * own clock; the sound region comes in the background and takes over the clock once it is complete.
+   * Returns false when the file has no index or a small sound region, so the plain download is used.
+   */
+  private async openIndexed(state: StreamState): Promise<boolean> {
+    try {
+      const head = await fetch(state.url, { headers: { range: 'bytes=0-65535' }, signal: state.segment.signal });
+      if (head.status !== 206) {
+        await head.body?.cancel();
+        return false;
+      }
+      const start = new Uint8Array(await head.arrayBuffer());
+      await this.loadIndex(state);
+      const entries = state.index;
+      const first = entries?.[0];
+      if (!entries || !first || first.offset < 2 * 1048576) return false;
+      // a separate reader for the opening bytes, so a fallback to the plain download starts clean
+      const probe = new StreamReader();
+      const opening = probe.push(start);
+      const info = probe.info;
+      if (!info) return false;
+      for (const chunk of opening) if (chunk.subtitles && !this.cues.length) void this.setCaptions(new TextDecoder().decode(chunk.data));
+      // where the sound starts: after the header and an optional subtitles chunk
+      const view = new DataView(start.buffer, start.byteOffset, start.byteLength);
+      let soundStart = 20;
+      if (start.length >= 26 && view.getUint16(24, true) === 0xfffe) soundStart += 6 + view.getUint32(20, true);
+      const response = await fetch(state.url, { headers: { range: `bytes=${first.offset}-` }, signal: state.segment.signal, priority: 'high' } as RequestInit);
+      if (response.status !== 206) {
+        await response.body?.cancel();
+        return false;
+      }
+      // from here on the stream is committed to this path
+      state.reader.info = info;
+      const segment = state.segment;
+      await new Promise<void>((resolve, reject) => {
+        this.download(state, response, new StreamReader(info, first.start), segment, () => state.chunks.length > 0 && resolve())
+          .then(() => resolve())
+          .catch((error: unknown) => {
+            if (state.abort.signal.aborted) return;
+            reject(error);
+            this.fail(error instanceof Error ? error : new GlyphcastError(String(error)));
+          });
+      });
+      this.emit('loadedmetadata');
+      this.emit('durationchange');
+      this.draw();
+      void this.loadSound(state, soundStart, first.offset - 1, info);
+      return true;
+    } catch (error) {
+      if (state.abort.signal.aborted || state.reader.info) throw error;
+      return false;
+    }
+  }
+
+  /** Downloads the embedded sound region and switches the clock to it at the current time. */
+  private async loadSound(state: StreamState, from: number, to: number, info: StreamInfo): Promise<void> {
+    try {
+      const response = await fetch(state.url, { headers: { range: `bytes=${from}-${to}` }, signal: state.abort.signal });
+      if (response.status !== 206) return;
+      const reader = new StreamReader(info, 0);
+      const pieces: Uint8Array[] = [];
+      for (const chunk of reader.push(new Uint8Array(await response.arrayBuffer()))) if (chunk.frames === 0 && !chunk.subtitles) pieces.push(chunk.data);
+      if (!pieces.length || this.stream !== state) return;
+      const playing = !this.paused;
+      this.media.src = URL.createObjectURL(new Blob(pieces as BlobPart[], { type: audioType(pieces[0] ?? new Uint8Array()) }));
+      await new Promise((resolve) => this.media.addEventListener('loadedmetadata', resolve, { once: true }));
+      if (this.stream !== state) return;
+      this.media.currentTime = Math.max(0, this.currentTime - state.offset);
+      this.mediaClock = true;
+      if (playing || !this.paused) await this.media.play().catch(() => undefined);
+    } catch {
+      // without sound the picture keeps playing on its own clock
+    }
   }
 
   private async download(state: StreamState, response: Response, reader: StreamReader, segment: AbortController, onChunks?: (chunks: Chunk[]) => void): Promise<void> {

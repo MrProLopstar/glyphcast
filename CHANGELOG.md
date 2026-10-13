@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.11
+
+- Files with an index start at once: the picture is fetched from its first chunk and plays while the embedded sound loads in the background, then the sound joins at the current moment (a film used to show a black screen for a minute on a phone)
+
 ## 0.20.10
 
 - The poster stays on screen until playback starts, not only while the file loads
