@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.1
+
+- Terminal player: the play button shows the action, pause bars while playing and a play triangle when paused
+
 ## 0.15.0
 
 - `glyphcast publish` uploads files over 95 MB in 90 MB parts, so the hub takes whole films; the hub serves the parts as one file with seeking

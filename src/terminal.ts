@@ -630,7 +630,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       }
       const span = pictureWidth >= 60 ? pictureWidth : view.width;
       const offset = pictureWidth >= 60 ? pictureLeft : 0;
-      const pause: Segment = { text: playing ? '▶' : '‖', act: toggle };
+      const pause: Segment = { text: playing ? '▌▌' : '▶ ', act: toggle };
       const time$ = ` ${clock(time)} / ${clock(total())} `;
       const options$: Segment[] = [
         { text: MODES[look.mode]?.[0] ?? '', act: () => (look.mode = (look.mode + 1) % MODES.length) },
@@ -653,7 +653,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         column += width;
       };
       let status = button(pause);
-      place(3, () => toggle());
+      place(pause.text.length + 2, () => toggle());
       status += time$;
       place(time$.length);
       const barFrom = column;
