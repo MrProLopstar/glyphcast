@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.10
+
+- The poster stays on screen until playback starts, not only while the file loads
+
 ## 0.20.9
 
 - Seek bar thumbnails keep the picture proportions instead of a squeezed strip

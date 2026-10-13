@@ -241,7 +241,8 @@ export class GlyphPlayerElement extends HTMLElement {
     try {
       await this.player.load(resolved);
       if (ticket !== this.loading) return;
-      this.poster(false);
+      // the poster stays until playback starts or the picture moves away from the start
+      if (!this.getAttribute('poster')) this.poster(false);
       this.updateRatio();
       this.renderMenu();
       this.update();
@@ -422,6 +423,8 @@ export class GlyphPlayerElement extends HTMLElement {
     for (const type of ['play', 'pause', 'timeupdate', 'durationchange', 'progress', 'volumechange', 'ratechange', 'ended', 'loadedmetadata']) player.addEventListener(type, () => this.update());
     player.addEventListener('waiting', () => this.frame.classList.add('waiting'));
     player.addEventListener('playing', () => this.frame.classList.remove('waiting'));
+    player.addEventListener('play', () => this.poster(false));
+    player.addEventListener('timeupdate', () => player.currentTime > 0.05 && this.poster(false));
     player.addEventListener('error', (event) => this.message(String((event as CustomEvent<Error>).detail?.message ?? 'Playback error')));
     player.addEventListener('ended', () => {
       if (this.hasAttribute('loop')) void player.play();
