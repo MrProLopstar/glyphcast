@@ -3,9 +3,9 @@
 [![npm](https://img.shields.io/npm/v/glyphcast?color=f0a04b)](https://www.npmjs.com/package/glyphcast)
 [![JSR](https://jsr.io/badges/@mrprolopstar/glyphcast)](https://jsr.io/@mrprolopstar/glyphcast)
 
-[English version](README.md) · [Песочница](https://mrprolopstar.github.io/glyphcast/) · [Хаб](https://mrprolopstar.github.io/gcast-hub/)
+[English version](README.md) · [Песочница](https://glc.1lop.ru/) · [Хаб](https://glc-hub.1lop.ru/)
 
-![Опенинг One Piece в режиме Брайля](https://mrprolopstar.github.io/glyphcast/preview.jpg)
+![Опенинг One Piece в режиме Брайля](https://glc.1lop.ru/preview.jpg)
 
 <sub>Опенинг One Piece в режиме Брайля, 180 колонок.</sub>
 
@@ -104,7 +104,7 @@ npx glyphcast micro movie.mp4 --cols 180                        # крошечн
 
 ## Хаб
 
-[gcast hub](https://mrprolopstar.github.io/gcast-hub/) хранит видео в `.gcast` и показывает их в браузере. Те же видео играют в консоли:
+[gcast hub](https://glc-hub.1lop.ru/) хранит видео в `.gcast` и показывает их в браузере. Те же видео играют в консоли:
 
 ```sh
 npx glyphcast hub                  # список и поиск

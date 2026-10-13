@@ -3,16 +3,23 @@
 [![npm](https://img.shields.io/npm/v/glyphcast?color=f0a04b)](https://www.npmjs.com/package/glyphcast)
 [![JSR](https://jsr.io/badges/@mrprolopstar/glyphcast)](https://jsr.io/@mrprolopstar/glyphcast)
 
-[Русская версия](README.ru.md) · [Playground](https://mrprolopstar.github.io/glyphcast/) · [Hub](https://mrprolopstar.github.io/gcast-hub/)
+[Русская версия](README.ru.md) · [Playground](https://glc.1lop.ru/) · [Converter](https://gcast.1lop.ru/) · [Hub](https://glc-hub.1lop.ru/)
 
-![One Piece opening in braille mode](https://mrprolopstar.github.io/glyphcast/preview.jpg)
+![One Piece opening in braille mode](https://glc.1lop.ru/preview.jpg)
 
 <sub>One Piece opening in braille mode, 180 columns.</sub>
 
 Video as colored glyphs. A complete player for the browser: controls, settings, subtitles, keyboard shortcuts, picture-in-picture and fullscreen, with every frame redrawn as characters by a WebGL2 shader. A server can also send glyph frames instead of video, so the browser receives a compact `.gcast` stream rather than the footage itself. The same stream plays in a terminal too.
 
 ```sh
-npm install glyphcast
+npm install glyphcast          # or: npm i -g glyphcast, then glc …
+```
+
+```sh
+glc encode movie.mp4 --detail --embed --poster   # video → .gcast with sound and a poster
+glc play movie.gcast                             # in the terminal, with sound
+glc play hub:<id>                                # a video from the hub
+glc help encode                                  # every option with examples
 ```
 
 ```html
@@ -41,7 +48,9 @@ No bundler? `import 'https://cdn.jsdelivr.net/npm/glyphcast@0/dist/element.js/+e
 | `tint` | One color for every glyph, for example `#33ff66` |
 | `boost` | Saturation, default `1.3` |
 | `autolevels` | `false` turns off per-scene brightness and contrast |
-| `mode` | `glyphs`, `braille` or `halftone` |
+| `mode` | `braille` (default), `glyphs` or `halftone` |
+| `heading`, `source` | Title in the top left corner and a link to the original |
+| `sources` | JSON list of `{ cols, src }`: quality choices, picked by width |
 | `edges`, `crt` | Contours and the tube screen look |
 | `sharp` | `false` turns off sharp ×2 (edge-directed upscaling) |
 | `smooth` | `false` turns off smoothing (in-between frames along block motion) |
@@ -104,7 +113,7 @@ Stream size depends on the grid and motion, not on the source resolution, so hea
 
 ## Hub
 
-[gcast hub](https://mrprolopstar.github.io/gcast-hub/) stores videos as `.gcast` and plays them in the browser. The same videos play in a terminal:
+[gcast hub](https://glc-hub.1lop.ru/) stores videos as `.gcast` and plays them in the browser. The same videos play in a terminal:
 
 ```sh
 npx glyphcast hub                  # list and search
