@@ -411,7 +411,7 @@ const pages = (bytes: Uint8Array): number[] => {
   return found;
 };
 
-const sounds = (audio: AudioSource | null, total: () => number, ffplay: string): { readonly start: (at: number) => Promise<number>; readonly stop: () => void; readonly close: () => void } => {
+const sounds = (audio: AudioSource | null, total: () => number, ffplay: string): { readonly start: (at: number) => Promise<number>; readonly stop: () => void; readonly close: () => void; readonly live: () => boolean } => {
   let child: ChildProcess | null = null;
   let session = 0;
   let missing = false;
@@ -422,7 +422,7 @@ const sounds = (audio: AudioSource | null, total: () => number, ffplay: string):
     else child?.kill();
     child = null;
   };
-  if (!audio) return { start: (at) => Promise.resolve(at), stop, close: stop };
+  if (!audio) return { start: (at) => Promise.resolve(at), stop, close: stop, live: () => false };
   process.once('exit', stop);
   const intro = audio.read(0, Math.min(audio.size, 65536)).then((first) => {
     const found = pages(first);
@@ -482,6 +482,7 @@ const sounds = (audio: AudioSource | null, total: () => number, ffplay: string):
     },
     stop,
     close: stop,
+    live: () => child !== null && !missing,
   };
 };
 
@@ -526,13 +527,22 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   let levels = NEUTRAL;
   const cache = new Map<number, Promise<DecodedChunk>>();
   let waiting = false;
-  const now = (): number => Math.min(total(), playing && !waiting ? base + (performance.now() - startedAt) / 1000 : base);
+  let syncing = 0;
+  let starts = 0;
+  const now = (): number => Math.min(total(), playing && !waiting && !syncing ? base + Math.max(0, performance.now() - startedAt) / 1000 : base);
+  // the picture holds still until the sound has really started, then both run from the same moment
   const sound = (): void => {
-    const wanted = base;
+    const wanted = now();
+    base = wanted;
+    const ticket = (starts += 1);
+    syncing = ticket;
     void audio.start(wanted).then((actual) => {
-      if (!playing || base !== wanted) return;
+      if (ticket !== starts) return;
+      syncing = 0;
+      if (!playing) return;
       base = actual;
-      startedAt = performance.now();
+      // ffplay needs a moment to open the sound device after it starts reading
+      startedAt = performance.now() + (audio.live() ? 200 : 0);
     });
   };
   let settle: ReturnType<typeof setTimeout> | null = null;

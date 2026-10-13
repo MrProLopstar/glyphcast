@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.6
+
+- Terminal: after a seek, a pause or a wait for loading the picture holds still until the sound really starts, so they stay together
+
 ## 0.20.5
 
 - Terminal: remote chunks load with one request each and six at a time, so a hub video keeps up instead of pausing for "loading…" every few seconds
