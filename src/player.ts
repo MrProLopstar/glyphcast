@@ -457,7 +457,7 @@ export class GlyphPlayer extends EventTarget {
     const stream = this.stream;
     if (!stream) return this.media.currentTime;
     if (this.hasAudio) return stream.offset + this.media.currentTime;
-    return stream.clockAt + (this.loop !== null ? ((performance.now() - stream.clockStart) / 1000) * this.rate : 0);
+    return stream.clockAt + (this.loop !== null && !this.stalled ? ((performance.now() - stream.clockStart) / 1000) * this.rate : 0);
   }
 
   set currentTime(seconds: number) {
@@ -571,7 +571,7 @@ export class GlyphPlayer extends EventTarget {
         this.emit('timeupdate');
       }
       const stream = this.stream;
-      if (stream && this.hasAudio) this.buffer(stream);
+      if (stream) this.buffer(stream);
       if (stream?.reader.info && this.currentTime >= this.duration - 0.02 && this.reachesEnd(stream)) {
         if (this.hasAudio) this.media.pause();
         this.finish();
@@ -586,12 +586,15 @@ export class GlyphPlayer extends EventTarget {
     const ahead = this.bufferedEnd - this.currentTime;
     const end = this.reachesEnd(stream);
     if (!this.stalled && !end && ahead < 0.3) {
+      // wait with a loader instead of running the clock past the downloaded frames
+      stream.clockAt = this.currentTime;
       this.stalled = true;
-      this.media.pause();
+      if (this.hasAudio) this.media.pause();
       this.emit('waiting');
-    } else if (this.stalled && (end || ahead > 2)) {
+    } else if (this.stalled && (end || ahead > 5)) {
       this.stalled = false;
-      void this.media.play().catch(() => undefined);
+      stream.clockStart = performance.now();
+      if (this.hasAudio) void this.media.play().catch(() => undefined);
       this.emit('playing');
     }
   }

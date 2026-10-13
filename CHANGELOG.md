@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.5
+
+- On a slow connection the player waits with a loader when the downloaded part runs out, instead of skipping ahead; playback resumes with 5 s in reserve
+
 ## 0.19.4
 
 - Terminal on Windows: pausing stops the sound, the whole ffplay process tree is closed
