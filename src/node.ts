@@ -139,11 +139,13 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const frameSize = cols * rows * 3 * (detail ? 8 : 1);
   const scale = detail ? `${cols * 2}:${rows * 4}` : `${cols}:${rows}`;
   let pending: Buffer = Buffer.alloc(0);
+  let bar: number | undefined;
   await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', ...piece(input, options), '-an', '-vf', `${cropped}fps=${fps},scale=${scale}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], (chunk) => {
     pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
     while (pending.length >= frameSize) {
       if (detail) {
-        const { cells, masks } = detailMasks(pending.subarray(0, frameSize), cols, rows);
+        const { cells, masks, bar: next } = detailMasks(pending.subarray(0, frameSize), cols, rows, 3, bar);
+        bar = next;
         encoder.add(cells, masks);
       } else encoder.add(pending.subarray(0, frameSize));
       pending = pending.subarray(frameSize);

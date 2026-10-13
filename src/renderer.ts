@@ -113,19 +113,24 @@ void main() {
     float pattern = detailed > 0.5 ? floor(texelFetch(patterns, ivec2(cell), 0).r * 255.0 + 0.5) : 0.0;
     if (pattern > 0.5) {
       lit = mod(floor(pattern / exp2(spot.y * 2.0 + spot.x)), 2.0);
-      // the cell's color belongs to its bright dots; the gaps take the darkest neighbor, so letters get no grey box
-      vec3 dark = texture(cells, (cell + vec2(-0.5, 0.5)) / grid).rgb;
-      vec3 other = texture(cells, (cell + vec2(1.5, 0.5)) / grid).rgb;
-      if (dot(other, WEIGHTS) < dot(dark, WEIGHTS)) dark = other;
-      other = texture(cells, (cell + vec2(0.5, -0.5)) / grid).rgb;
-      if (dot(other, WEIGHTS) < dot(dark, WEIGHTS)) dark = other;
-      other = texture(cells, (cell + vec2(0.5, 1.5)) / grid).rgb;
-      if (dot(other, WEIGHTS) < dot(dark, WEIGHTS)) dark = other;
+      // the cell's color belongs to its bright dots; the gaps take the neighbors darker than it, averaged,
+      // which is close to the real background: no grey box around letters and no black rim around moving shapes
+      float own = dot(source, WEIGHTS);
+      vec3 sum = vec3(0.0);
+      float count = 0.0;
+      for (int side = 0; side < 4; side += 1) {
+        vec2 toward = side == 0 ? vec2(-1.0, 0.0) : side == 1 ? vec2(1.0, 0.0) : side == 2 ? vec2(0.0, -1.0) : vec2(0.0, 1.0);
+        vec3 beside = texture(cells, (cell + toward + 0.5) / grid).rgb;
+        float weight = step(dot(beside, WEIGHTS), own - 0.04);
+        sum += beside * weight;
+        count += weight;
+      }
+      vec3 dark = count > 0.0 ? sum / count : source * 0.5;
       under = paint(dark, leveled(dot(dark, WEIGHTS))) * 0.5;
     }
     vec2 inside = (fract(local * vec2(2.0, 4.0)) - 0.5) * vec2(1.2, 1.0);
     ink = lit * smoothstep(0.5, 0.36, length(inside));
-    glyph = min(paint(pattern > 0.5 ? source : near, pattern > 0.5 ? min(1.0, level + 0.35) : max(level, nearLevel)) * 1.3, vec3(1.0));
+    glyph = min(paint(pattern > 0.5 ? source : near, pattern > 0.5 ? level : max(level, nearLevel)) * 1.3, vec3(1.0));
   } else if (mode == 2) {
     float radius = sqrt(level) * 0.46;
     float distance = length((local - 0.5) * vec2(0.6, 1.0));

@@ -681,7 +681,7 @@ const encodeMasks = (shape: Layout, modes: Uint8Array, reference: Uint8Array, ma
  * RGBA: one byte per cell, bit `y * 2 + x` set where that sub-pixel is clearly brighter than the cell's average. Such cells carry the color of their bright dots.
  * Flat cells get 0, so players fall back to their usual drawing there.
  */
-export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number, rows: number, stride = 3): { readonly cells: Uint8ClampedArray; readonly masks: Uint8Array } => {
+export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number, rows: number, stride = 3, previous?: number): { readonly cells: Uint8ClampedArray; readonly masks: Uint8Array; readonly bar: number } => {
   const width = cols * 2;
   const count = cols * rows;
   const cells = new Uint8ClampedArray(count * 4);
@@ -716,7 +716,9 @@ export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number
   }
   // the bar follows the frame: a clean or dark frame keeps faint lines, film grain everywhere raises it so noise stays flat
   const median = Float32Array.from(spreads).sort()[count >> 1] ?? 0;
-  const bar = Math.min(96, Math.max(48, median * 2 + 48));
+  const target = Math.min(96, Math.max(48, median * 2 + 48));
+  // `previous` is the last frame's bar: following it slowly keeps patterns from blinking on and off in motion
+  const bar = previous === undefined ? target : previous + (target - previous) * 0.15;
   for (let cell = 0; cell < count; cell += 1) {
     if ((spreads[cell] ?? 0) < bar) continue;
     let low = 255;
@@ -746,7 +748,7 @@ export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number
     cells[cell * 4 + 2] = b / lit;
     masks[cell] = mask;
   }
-  return { cells, masks };
+  return { cells, masks, bar };
 };
 
 /**

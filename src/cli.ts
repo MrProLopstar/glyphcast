@@ -70,6 +70,7 @@ const HELP: Record<string, string> = {
     --image poster.jpg    poster
     --subtitles file.vtt  subtitles
     --variant file.gcast  the same video in another grid width, for the quality menu; repeatable
+    --source URL          link to the original (YouTube and so on), shown in the player
 
   GLYPHCAST_HUB_KEY gives admin rights (listing right away); without it uploads go to review.`,
   hub: `glyphcast hub [search]
@@ -131,6 +132,7 @@ const main = async (): Promise<void> => {
       license: { type: 'string' },
       image: { type: 'string' },
       subtitles: { type: 'string' },
+      source: { type: 'string' },
       variant: { type: 'string', multiple: true },
       audio: { type: 'string' },
       port: { type: 'string' },
@@ -165,71 +167,95 @@ const main = async (): Promise<void> => {
     const { files } = await hub();
     const license = values.license ?? 'own';
     const query = new URLSearchParams({ title: values.title, license, listed: license === 'own' ? '0' : '1' });
-    const send = async (url: string, path: string, type: string): Promise<Record<string, unknown>> => {
-      const response = await fetch(url, { method: 'POST', body: readFileSync(path), headers: { ...auth, 'content-type': type } });
-      const data = (await response.json()) as Record<string, unknown>;
-      if (!response.ok) throw new Error(`The hub refused ${basename(path)}: ${String(data['error'] ?? response.status)}`);
-      return data;
-    };
-    const size = statSync(input).size;
-    let entry: Record<string, unknown>;
-    if (size <= 95 * 1048576) entry = await send(`${files}/upload?${query}`, input, 'application/octet-stream');
-    else {
-      const call = async (url: string, body?: Uint8Array<ArrayBuffer>): Promise<Record<string, unknown>> => {
-        for (let attempt = 1; ; attempt += 1) {
-          try {
-            const response = await fetch(url, { method: 'POST', headers: { ...auth, 'content-type': 'application/octet-stream' }, ...(body ? { body } : {}) });
-            const data = (await response.json()) as Record<string, unknown>;
-            if (response.ok) return data;
-            if (response.status < 500 || attempt >= 5) throw new Error(`The hub refused ${basename(input)}: ${String(data['error'] ?? response.status)}`);
-          } catch (error) {
-            if (attempt >= 5 || (error instanceof Error && error.message.startsWith('The hub refused'))) throw error;
-          }
-          console.log(`${basename(input)}: connection problem, retry ${attempt} of 4 in ${attempt * 5} s`);
+    if (values.source) query.set('source', values.source);
+    const retry = async <T>(what: string, run: () => Promise<T>): Promise<T> => {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          return await run();
+        } catch (error) {
+          if (attempt >= 5 || (error instanceof Error && error.message.startsWith('The hub refused'))) throw error;
+          console.log(`${what}: connection problem, retry ${attempt} of 4 in ${attempt * 5} s`);
           await new Promise((resolve) => setTimeout(resolve, attempt * 5000));
         }
-      };
-      // progress lives next to the file, so running the same command again continues the upload
-      const saved = `${input}.upload.json`;
-      const previous = (() => {
-        try {
-          const data = JSON.parse(readFileSync(saved, 'utf8')) as { id: string; part: number; size: number; token: string; done: number[] };
-          return data.size === size ? data : null;
-        } catch {
-          return null;
-        }
-      })();
-      const started: { id: string; part: number; size: number; token: string; done: number[] } = previous ?? { ...(await call(`${files}/parts/start?size=${size}`).then((data) => ({ id: String(data['id']), part: Number(data['part']), token: String(data['token'] ?? '') }))), size, done: [] as number[] };
-      if (previous) console.log(`${basename(input)}: continuing an earlier upload, ${previous.done.length} parts already there`);
-      const { id, part } = started;
-      if (started.token) auth['x-edit-token'] = started.token;
-      const file = await open(input, 'r');
+      }
+    };
+    const call = (url: string, init: RequestInit = {}, what = basename(input)): Promise<Record<string, unknown>> =>
+      retry(what, async () => {
+        const response = await fetch(url, { method: 'POST', ...init, headers: { ...auth, ...(init.headers as Record<string, string> | undefined) } });
+        const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        if (response.ok) return data;
+        const message = `The hub refused ${what}: ${String(data['error'] ?? response.status)}`;
+        throw response.status < 500 ? new Error(message) : new TypeError(message);
+      });
+    /** Sends a file straight to the Drive session the hub opened; a saved session continues where it stopped. */
+    const deliver = async (path: string, extra: Record<string, string>): Promise<{ id: string; token: string }> => {
+      const size = statSync(path).size;
+      const saved = `${path}.upload.json`;
+      let started: { id: string; token: string; upload: string; size: number } | null = null;
       try {
-        for (let offset = 0, index = 0; offset < size; offset += part, index += 1) {
-          const length = Math.min(part, size - offset);
-          if (!started.done.includes(index)) {
-            const bytes = new Uint8Array(length);
-            await file.read(bytes, 0, length, offset);
-            await call(`${files}/parts/${id}/${index}`, bytes);
-            started.done.push(index);
-            writeFileSync(saved, JSON.stringify(started));
+        const data = JSON.parse(readFileSync(saved, 'utf8')) as { id: string; token: string; upload: string; size: number };
+        if (data.size === size) started = data;
+      } catch {
+        started = null;
+      }
+      let offset = 0;
+      if (started) {
+        const status = await fetch(started.upload, { method: 'PUT', headers: { 'content-range': `bytes */${size}` } }).catch(() => null);
+        if (status && (status.ok || status.status === 308)) {
+          offset = status.ok ? size : Number(/bytes=0-(\d+)/.exec(status.headers.get('range') ?? '')?.[1] ?? -1) + 1;
+          console.log(`${basename(path)}: continuing an earlier upload from ${Math.round((offset / size) * 100)}%`);
+        } else started = null;
+      }
+      if (!started) {
+        const data = await call(`${files}/parts/start?${new URLSearchParams({ size: String(size), ...extra })}`, {}, basename(path));
+        started = { id: String(data['id']), token: String(data['token'] ?? ''), upload: String(data['upload']), size };
+        writeFileSync(saved, JSON.stringify(started));
+      }
+      const piece = 32 * 262144;
+      const file = await open(path, 'r');
+      let reported = -1;
+      try {
+        while (offset < size) {
+          const length = Math.min(piece, size - offset);
+          const bytes = new Uint8Array(length);
+          await file.read(bytes, 0, length, offset);
+          const from = offset;
+          await retry(basename(path), async () => {
+            const response = await fetch(started.upload, { method: 'PUT', body: bytes, headers: { 'content-range': `bytes ${from}-${from + length - 1}/${size}` } });
+            if (response.status !== 308 && !response.ok) throw new TypeError(`Google Drive answered ${response.status}`);
+          });
+          offset += length;
+          const share = Math.floor((offset / size) * 100);
+          if (share !== reported && (share % 5 === 0 || offset === size)) {
+            reported = share;
+            console.log(`${basename(path)}: ${share}% uploaded`);
           }
-          console.log(`${basename(input)}: ${Math.round(((offset + length) / size) * 100)}% uploaded`);
         }
       } finally {
         await file.close();
       }
-      entry = await call(`${files}/parts/${id}/finish?${query}`);
-      rmSync(saved, { force: true });
+      return started;
+    };
+    const size = statSync(input).size;
+    let entry: Record<string, unknown>;
+    if (size <= 16 * 1048576) entry = await call(`${files}/upload?${query}`, { body: readFileSync(input), headers: { 'content-type': 'application/octet-stream' } });
+    else {
+      const started = await deliver(input, {});
+      if (started.token) auth['x-edit-token'] = started.token;
+      entry = await call(`${files}/parts/${started.id}/finish?${query}`);
+      rmSync(`${input}.upload.json`, { force: true });
     }
     if (entry['token']) auth['x-edit-token'] = String(entry['token']);
-    if (values.image) await send(`${files}/poster/${String(entry['id'])}`, values.image, 'image/jpeg');
-    if (values.subtitles) await send(`${files}/subtitles/${String(entry['id'])}`, values.subtitles, 'text/vtt');
+    const id = String(entry['id']);
+    if (values.image) await call(`${files}/poster/${id}`, { body: readFileSync(values.image), headers: { 'content-type': 'image/jpeg' } }, basename(values.image));
+    if (values.subtitles) await call(`${files}/subtitles/${id}`, { body: readFileSync(values.subtitles), headers: { 'content-type': 'text/vtt' } }, basename(values.subtitles));
     for (const extra of values.variant ?? []) {
-      const added = await send(`${files}/variant/${String(entry['id'])}`, extra, 'application/octet-stream');
+      const started = await deliver(extra, { variant: id });
+      const added = await call(`${files}/parts/${started.id}/finish`, {}, basename(extra));
+      rmSync(`${extra}.upload.json`, { force: true });
       console.log(`${basename(extra)}: added as ${String(added['cols'])} columns`);
     }
-    console.log(`${String(entry['title'])}: hub:${String(entry['listed'] ? entry['slug'] : entry['id'])}`);
+    console.log(`${String(entry['title'])}: hub:${String(entry['listed'] ? entry['slug'] : id)}${entry['review'] ? ' (waits for review before the open list)' : ''}`);
     return;
   }
   if (command === 'hub') {
@@ -373,6 +399,8 @@ const encode = async (input: string, out: string, values: { readonly cols?: stri
 };
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
+  // fetch hides the network reason in cause
+  const cause = error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : "";
+  console.error(error instanceof Error ? `${error.message}${cause}` : error);
   process.exitCode = 1;
 });

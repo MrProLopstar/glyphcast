@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.1
+
+- Patterned cells are no longer brightened on top of their bright-dot color, so noise in dark scenes stays dark
+- Gaps in patterned cells take the average of darker neighbors, no black rim around moving shapes
+- The `--detail` threshold follows the scene slowly, patterns stop blinking in motion (re-encode to use it)
+- `publish` sends files straight to the hub storage and continues an interrupted upload; `--source` adds a link to the original
+
 ## 0.20.0
 
 - `heading` and `source` attributes: the title in the top left corner of the player with a link to the original
