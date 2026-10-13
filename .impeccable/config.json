@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "src/element.ts"
+        ],
+        "createdAt": "2026-10-13T16:50:42.886Z",
+        "reason": "Claude: poster <img> in the player template gets its src from the poster attribute at runtime and stays hidden (class gone) until then"
+      }
+    ]
+  }
+}

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.20.0
+
+- `heading` and `source` attributes: the title in the top left corner of the player with a link to the original
+- Patterned (`--detail`) cells draw their gaps with the darkest neighbor, no grey box around letters
+- `--detail` threshold follows each frame: faint lines survive in clean frames, film grain stays flat, files about 10% smaller
+- CLI: `glc help <command>` with every option and examples, `--start` and `--duration` to encode a piece, progress lines every 30 s in logs and background jobs
+- `publish` works without a key (uploads wait for review), retries broken parts and continues an interrupted upload
+
 ## 0.19.7
 
 - Smaller files from `encode`: chunks are deflated at level 9 and embedded Opus defaults to 40 kbit/s (about 10% smaller overall)

@@ -86,7 +86,9 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 0.2s; }
 [aria-checked="true"] .switch { background: var(--accent); }
 [aria-checked="true"] .switch::after { transform: translateX(14px); }
-.badge { position: absolute; top: 12px; left: 12px; padding: 3px 8px; border-radius: 6px; background: var(--panel); font: 11px ui-monospace, Consolas, monospace; opacity: 0.85; }
+.badge { position: absolute; top: 12px; left: 12px; max-width: calc(100% - 140px); padding: 4px 10px; border-radius: 6px; background: var(--panel); font: 600 13px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; opacity: 0.9; transition: opacity 0.3s; display: flex; gap: 10px; align-items: baseline; }
+.badge a { color: var(--accent); font-weight: 400; font-size: 12px; text-decoration: none; white-space: nowrap; }
+.badge a:hover { text-decoration: underline; }
 .idle .badge { opacity: 0; }
 @container (max-width: 520px) {
   .back, .forward, .volume input { display: none; }
@@ -129,7 +131,7 @@ type DocumentPip = { requestWindow: (options: { width: number; height: number })
  * `muted`, `loop`, `sources` (JSON list of `{ cols, src }` qualities, picked by width), `fullsize` (fill the element's own size, for embeds). The `player` property gives the underlying `GlyphPlayer`.
  */
 export class GlyphPlayerElement extends HTMLElement {
-  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'poster', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt', 'sharp', 'smooth', 'sources'];
+  static readonly observedAttributes = ['src', 'audio', 'youtube', 'file', 'server', 'poster', 'subtitles', 'cols', 'glyphs', 'tint', 'boost', 'autolevels', 'fill', 'mode', 'edges', 'crt', 'sharp', 'smooth', 'sources', 'heading', 'source'];
 
   readonly player: GlyphPlayer;
   private readonly root: ShadowRoot;
@@ -224,6 +226,7 @@ export class GlyphPlayerElement extends HTMLElement {
     if (previous === next || !this.isConnected) return;
     if (['src', 'audio', 'youtube', 'file', 'server', 'sources'].includes(name)) void this.reload();
     else if (name === 'subtitles') this.captions();
+    else if (name === 'heading' || name === 'source') this.badge(null);
     else this.player.configure(this.look());
     this.renderMenu();
   }
@@ -310,10 +313,21 @@ export class GlyphPlayerElement extends HTMLElement {
     image.classList.toggle('gone', !show || !url);
   }
 
+  /** The title in the top left corner: a server video's own title, else the `heading` attribute, with a link to `source`. */
   private badge(text: string | null): void {
     const badge = this.$('.badge');
-    badge.hidden = !text;
-    badge.textContent = text ?? '';
+    const title = text ?? this.getAttribute('heading');
+    const source = this.getAttribute('source');
+    badge.hidden = !title && !source;
+    badge.textContent = title ?? '';
+    if (source && (source.startsWith('https://') || source.startsWith('http://'))) {
+      const link = document.createElement('a');
+      link.href = source;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'оригинал ↗';
+      badge.append(link);
+    }
   }
 
   private message(text: string | null): void {
