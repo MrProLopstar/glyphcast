@@ -193,21 +193,20 @@ const main = async (): Promise<void> => {
       const saved = `${input}.upload.json`;
       const previous = (() => {
         try {
-          const data = JSON.parse(readFileSync(saved, 'utf8')) as { id: string; part: number; size: number; done: number[] };
+          const data = JSON.parse(readFileSync(saved, 'utf8')) as { id: string; part: number; size: number; token: string; done: number[] };
           return data.size === size ? data : null;
         } catch {
           return null;
         }
       })();
-      const started: { id: string; part: number; size: number; done: number[] } = previous ?? { ...(await call(`${files}/parts/start`).then((data) => ({ id: String(data['id']), part: Number(data['part']) }))), size, done: [] as number[] };
+      const started: { id: string; part: number; size: number; token: string; done: number[] } = previous ?? { ...(await call(`${files}/parts/start?size=${size}`).then((data) => ({ id: String(data['id']), part: Number(data['part']), token: String(data['token'] ?? '') }))), size, done: [] as number[] };
       if (previous) console.log(`${basename(input)}: continuing an earlier upload, ${previous.done.length} parts already there`);
       const { id, part } = started;
-      const sizes: number[] = [];
+      if (started.token) auth['x-edit-token'] = started.token;
       const file = await open(input, 'r');
       try {
         for (let offset = 0, index = 0; offset < size; offset += part, index += 1) {
           const length = Math.min(part, size - offset);
-          sizes.push(length);
           if (!started.done.includes(index)) {
             const bytes = new Uint8Array(length);
             await file.read(bytes, 0, length, offset);
@@ -220,10 +219,10 @@ const main = async (): Promise<void> => {
       } finally {
         await file.close();
       }
-      query.set('sizes', sizes.join(','));
       entry = await call(`${files}/parts/${id}/finish?${query}`);
       rmSync(saved, { force: true });
     }
+    if (entry['token']) auth['x-edit-token'] = String(entry['token']);
     if (values.image) await send(`${files}/poster/${String(entry['id'])}`, values.image, 'image/jpeg');
     if (values.subtitles) await send(`${files}/subtitles/${String(entry['id'])}`, values.subtitles, 'text/vtt');
     for (const extra of values.variant ?? []) {
@@ -312,9 +311,12 @@ interface HubVideo {
 
 const hub = async (): Promise<{ readonly files: string; readonly videos: HubVideo[] }> => {
   const base = (process.env['GLYPHCAST_HUB'] ?? 'https://mrprolopstar.github.io/gcast-hub').replace(/\/$/, '');
-  const [config, videos] = await Promise.all([fetch(`${base}/hub.json`), fetch(`${base}/videos.json`)]);
-  if (!config.ok || !videos.ok) throw new Error(`The hub at ${base} does not answer`);
-  return { files: ((await config.json()) as { files: string }).files.replace(/\/$/, ''), videos: (await videos.json()) as HubVideo[] };
+  const config = await fetch(`${base}/hub.json`);
+  if (!config.ok) throw new Error(`The hub at ${base} does not answer`);
+  const files = ((await config.json()) as { files: string }).files.replace(/\/$/, '');
+  const videos = await fetch(`${files}/videos`);
+  if (!videos.ok) throw new Error(`The hub at ${files} does not answer`);
+  return { files, videos: (await videos.json()) as HubVideo[] };
 };
 
 const clock = (seconds: number): string => {
