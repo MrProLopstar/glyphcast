@@ -683,54 +683,68 @@ const encodeMasks = (shape: Layout, modes: Uint8Array, reference: Uint8Array, ma
  */
 export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number, rows: number, stride = 3): { readonly cells: Uint8ClampedArray; readonly masks: Uint8Array } => {
   const width = cols * 2;
-  const cells = new Uint8ClampedArray(cols * rows * 4);
-  const masks = new Uint8Array(cols * rows);
-  const lumas = new Float32Array(8);
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      let r = 0;
-      let g = 0;
-      let b = 0;
-      let low = 255;
-      let high = 0;
-      for (let dot = 0; dot < 8; dot += 1) {
-        const at = ((row * 4 + (dot >> 1)) * width + col * 2 + (dot & 1)) * stride;
-        const pr = pixels[at] ?? 0;
-        const pg = pixels[at + 1] ?? 0;
-        const pb = pixels[at + 2] ?? 0;
-        r += pr;
-        g += pg;
-        b += pb;
-        const luma = pr * 0.299 + pg * 0.587 + pb * 0.114;
-        lumas[dot] = luma;
-        low = Math.min(low, luma);
-        high = Math.max(high, luma);
-      }
-      const cell = row * cols + col;
-      cells[cell * 4] = r / 8;
-      cells[cell * 4 + 1] = g / 8;
-      cells[cell * 4 + 2] = b / 8;
-      cells[cell * 4 + 3] = 255;
-      if (high - low < 48) continue;
-      const middle = (high + low) / 2;
-      let mask = 0;
-      let lit = 0;
-      r = g = b = 0;
-      for (let dot = 0; dot < 8; dot += 1) {
-        if ((lumas[dot] ?? 0) <= middle) continue;
-        mask |= 1 << dot;
-        lit += 1;
-        const at = ((row * 4 + (dot >> 1)) * width + col * 2 + (dot & 1)) * stride;
-        r += pixels[at] ?? 0;
-        g += pixels[at + 1] ?? 0;
-        b += pixels[at + 2] ?? 0;
-      }
-      // a patterned cell is drawn as its lit dots, so it takes their color: thin bright lines stay bright
-      cells[cell * 4] = r / lit;
-      cells[cell * 4 + 1] = g / lit;
-      cells[cell * 4 + 2] = b / lit;
-      masks[cell] = mask;
+  const count = cols * rows;
+  const cells = new Uint8ClampedArray(count * 4);
+  const masks = new Uint8Array(count);
+  const lumas = new Float32Array(count * 8);
+  const spreads = new Float32Array(count);
+  const offset = (cell: number, dot: number): number => ((Math.floor(cell / cols) * 4 + (dot >> 1)) * width + (cell % cols) * 2 + (dot & 1)) * stride;
+  for (let cell = 0; cell < count; cell += 1) {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let low = 255;
+    let high = 0;
+    for (let dot = 0; dot < 8; dot += 1) {
+      const at = offset(cell, dot);
+      const pr = pixels[at] ?? 0;
+      const pg = pixels[at + 1] ?? 0;
+      const pb = pixels[at + 2] ?? 0;
+      r += pr;
+      g += pg;
+      b += pb;
+      const luma = pr * 0.299 + pg * 0.587 + pb * 0.114;
+      lumas[cell * 8 + dot] = luma;
+      low = Math.min(low, luma);
+      high = Math.max(high, luma);
     }
+    cells[cell * 4] = r / 8;
+    cells[cell * 4 + 1] = g / 8;
+    cells[cell * 4 + 2] = b / 8;
+    cells[cell * 4 + 3] = 255;
+    spreads[cell] = high - low;
+  }
+  // the bar follows the frame: a clean or dark frame keeps faint lines, film grain everywhere raises it so noise stays flat
+  const median = Float32Array.from(spreads).sort()[count >> 1] ?? 0;
+  const bar = Math.min(96, Math.max(48, median * 2 + 48));
+  for (let cell = 0; cell < count; cell += 1) {
+    if ((spreads[cell] ?? 0) < bar) continue;
+    let low = 255;
+    let high = 0;
+    for (let dot = 0; dot < 8; dot += 1) {
+      low = Math.min(low, lumas[cell * 8 + dot] ?? 0);
+      high = Math.max(high, lumas[cell * 8 + dot] ?? 0);
+    }
+    const middle = (high + low) / 2;
+    let mask = 0;
+    let lit = 0;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    for (let dot = 0; dot < 8; dot += 1) {
+      if ((lumas[cell * 8 + dot] ?? 0) <= middle) continue;
+      mask |= 1 << dot;
+      lit += 1;
+      const at = offset(cell, dot);
+      r += pixels[at] ?? 0;
+      g += pixels[at + 1] ?? 0;
+      b += pixels[at + 2] ?? 0;
+    }
+    // a patterned cell is drawn as its lit dots, so it takes their color: thin bright lines stay bright
+    cells[cell * 4] = r / lit;
+    cells[cell * 4 + 1] = g / lit;
+    cells[cell * 4 + 2] = b / lit;
+    masks[cell] = mask;
   }
   return { cells, masks };
 };
