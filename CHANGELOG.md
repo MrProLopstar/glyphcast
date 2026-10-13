@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.8
+
+- Terminal: dot patterns only for thin bright lines (up to 4 lit dots); other patterned cells are drawn as usual at their real brightness, no glaring edges
+
 ## 0.20.7
 
 - Terminal: the dark side of patterned cells is dimmed like the dots around it, no bright solid blocks

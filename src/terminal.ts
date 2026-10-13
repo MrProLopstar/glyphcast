@@ -149,20 +149,34 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
           back = paint(shade, level(shade)).map((value) => value * fill);
           const grid = options.detail;
           const pattern = grid ? (grid.masks[Math.min(grid.rows - 1, Math.floor(((y + 0.5) / height) * grid.rows)) * grid.cols + Math.min(grid.cols - 1, Math.floor(((x + 0.5) / width) * grid.cols))] ?? 0) : 0;
-          if (pattern) {
-            bits = 0;
-            for (let dot = 0; dot < 8; dot += 1) if ((pattern >> dot) & 1) bits |= 1 << (BRAILLE[(dot & 1) * 4 + (dot >> 1)] ?? 0);
-            color = paint(center, lit).map((value) => value * 1.15) as [number, number, number];
-            // the cell's color is its bright dots, so the gaps take the neighbors darker than it, averaged:
-            // no grey box around letters and no black rim around moving shapes
-            const u = 1 / (grid?.cols ?? width);
-            const v = 1 / (grid?.rows ?? height);
+          // one color per cell here, so patterns are kept only for thin bright lines (up to 4 lit dots): wide bright halves
+          // would light the whole cell and stand out from the sparse dots around them
+          let lit$ = 0;
+          for (let rest = pattern; rest; rest &= rest - 1) lit$ += 1;
+          const u = 1 / (grid?.cols ?? width);
+          const v = 1 / (grid?.rows ?? height);
+          const darkSide = (): number[] => {
+            // the stored color is the bright dots'; the gaps are closest to the neighbors darker than it
             const cx = (x + 0.5) / width;
             const cy = (y + 0.5) / height;
             const around = [sample(cx - u, cy), sample(cx + u, cy), sample(cx, cy - v), sample(cx, cy + v)];
             const own = luma(center[0] ?? 0, center[1] ?? 0, center[2] ?? 0);
             const darker = around.filter((item) => luma(item[0] ?? 0, item[1] ?? 0, item[2] ?? 0) < own - 0.04);
-            const dark = darker.length ? [0, 1, 2].map((c) => darker.reduce((sum, item) => sum + (item[c] ?? 0), 0) / darker.length) : center.map((value) => value * 0.5);
+            return darker.length ? [0, 1, 2].map((c) => darker.reduce((sum, item) => sum + (item[c] ?? 0), 0) / darker.length) : center.map((value) => value * 0.5);
+          };
+          if (pattern && lit$ > 4) {
+            // drawn the usual way, but as bright as the whole cell really is, not as its bright dots
+            const dark = darkSide();
+            const whole = [0, 1, 2].map((c) => ((center[c] ?? 0) * lit$ + (dark[c] ?? 0) * (8 - lit$)) / 8);
+            const ratio = luma(whole[0] ?? 0, whole[1] ?? 0, whole[2] ?? 0) / Math.max(0.01, luma(center[0] ?? 0, center[1] ?? 0, center[2] ?? 0));
+            color = color.map((value) => value * ratio) as [number, number, number];
+            back = back.map((value) => value * ratio);
+          }
+          if (pattern && lit$ <= 4) {
+            bits = 0;
+            for (let dot = 0; dot < 8; dot += 1) if ((pattern >> dot) & 1) bits |= 1 << (BRAILLE[(dot & 1) * 4 + (dot >> 1)] ?? 0);
+            color = paint(center, lit).map((value) => value * 1.15) as [number, number, number];
+            const dark = darkSide();
             // the dark side shows about as bright as a dotted cell of that color looks: no black outline, no bright block
             back = paint(dark, level(dark)).map((value) => value * Math.max(fill, 0.55));
           }
