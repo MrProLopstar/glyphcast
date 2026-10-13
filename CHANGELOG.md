@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.1
+
+- Sharp ×2 is off by default: on video it changes too little to be worth it; the menu, `sharp` and the terminal 2x button still turn it on
+
 ## 0.13.0
 
 - Live streams: `glyphcast play live:<room>` watches a gcast hub broadcast in the terminal, and the player plays endless `.gcast` streams without leaving extra connections open
