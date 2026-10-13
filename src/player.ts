@@ -17,7 +17,7 @@ export interface LookOptions {
   readonly autoLevels?: boolean;
   /** Background color, CSS hex. Default `#05070a`. */
   readonly background?: string;
-  /** `glyphs`, `braille` (2×4 dots per cell) or `halftone` (a dot sized by brightness). Default `glyphs`. */
+  /** `glyphs`, `braille` (2×4 dots per cell) or `halftone` (a dot sized by brightness). Default `braille`. */
   readonly mode?: RenderMode;
   /** Contours drawn with `- / | \` along their direction. Default false. */
   readonly edges?: boolean;
@@ -121,7 +121,7 @@ export class GlyphPlayer extends EventTarget {
       tint: options.tint ?? null,
       autoLevels: options.autoLevels ?? true,
       background: options.background ?? '#05070a',
-      mode: options.mode ?? 'glyphs',
+      mode: options.mode ?? 'braille',
       edges: options.edges ?? false,
       crt: options.crt ?? false,
       fill: options.fill ?? 0.25,

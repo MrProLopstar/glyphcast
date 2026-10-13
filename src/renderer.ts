@@ -24,7 +24,7 @@ export interface FrameStyle {
   readonly boost?: number;
   /** Paint every glyph in one color instead of the frame colors, CSS hex. */
   readonly tint?: string | null;
-  /** Default `glyphs`. */
+  /** Default `braille`. */
   readonly mode?: RenderMode;
   /** Draw contours with `- / | \` along their direction. Glyph mode only. Default false. */
   readonly edges?: boolean;
@@ -363,7 +363,7 @@ export class GlyphRenderer {
     gl.uniform1f(this.uniforms['contrast'] ?? null, levels.contrast);
     gl.uniform1f(this.uniforms['boost'] ?? null, style.boost ?? 1.3);
     gl.uniform4fv(this.uniforms['tint'] ?? null, style.tint ? [...hex(style.tint), 1] : [0, 0, 0, 0]);
-    gl.uniform1i(this.uniforms['mode'] ?? null, Math.max(0, MODES.indexOf(style.mode ?? 'glyphs')));
+    gl.uniform1i(this.uniforms['mode'] ?? null, Math.max(0, MODES.indexOf(style.mode ?? 'braille')));
     gl.uniform1f(this.uniforms['edges'] ?? null, style.edges ? 1 : 0);
     gl.uniform1f(this.uniforms['crt'] ?? null, style.crt ? 1 : 0);
     gl.uniform1f(this.uniforms['fill'] ?? null, style.fill ?? 0.25);

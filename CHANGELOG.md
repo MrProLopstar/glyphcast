@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.4
+
+- Braille is the default render mode everywhere: the player, the element, the renderer and the terminal
+
 ## 0.20.3
 
 - Patterned cells draw all eight dots, the dark ones in the color of the darker side: no black outline around people against a bright background

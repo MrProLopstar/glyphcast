@@ -546,7 +546,7 @@ export class GlyphPlayerElement extends HTMLElement {
       }));
     }
     parts.push(
-      chips('Отрисовка', MODES, look.mode ?? 'glyphs', (value) => player.configure({ mode: value as RenderMode })),
+      chips('Отрисовка', MODES, look.mode ?? 'braille', (value) => player.configure({ mode: value as RenderMode })),
       chips('Символы', GLYPH_SETS, look.glyphs, (value) => player.configure({ glyphs: String(value) })),
       chips('Цвет', TINTS, look.tint ?? null, (value) => player.configure({ tint: (value as string | null) ?? null })),
     );

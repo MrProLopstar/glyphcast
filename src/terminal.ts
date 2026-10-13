@@ -48,7 +48,7 @@ export interface AnsiOptions {
   /** Terminal cells available; the picture is fitted into them, keeping its proportions. */
   readonly width?: number;
   readonly height?: number;
-  /** Default `glyphs`. */
+  /** Default `braille`. */
   readonly mode?: TerminalMode;
   /** One color for every glyph, CSS hex, or null for the frame colors. */
   readonly tint?: string | null;
@@ -81,7 +81,7 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
   const boost = options.boost ?? 1.3;
   const tint = options.tint ? rgb(options.tint) : null;
   const fill = options.fill ?? 0;
-  const mode = options.mode ?? 'glyphs';
+  const mode = options.mode ?? 'braille';
   const { width, height } = fitTerminal(cols, rows, options.width ?? cols, options.height ?? Math.round(rows / 1.2), options.cellRatio);
   const sample = (x: number, y: number): [number, number, number] => {
     const gx = Math.min(cols - 1, Math.max(0, x * cols - 0.5));
