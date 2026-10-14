@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { open } from 'node:fs/promises';
-import { basename, extname } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { StreamReader } from './format.js';
 import { encodeMicroVideo, encodeVideo, extractAudio, extractPoster } from './node.js';
@@ -20,6 +21,8 @@ const HELP: Record<string, string> = {
     --fps 24              frames per second
     --detail              stores a 2x4 dot pattern for cells with sharp edges: readable titles and
                           thin lines in braille, about 15% larger
+    --shades              with --detail: also keep the color of the dark side of those cells, exact edges
+                          between two strong colors; format version 4, 20-35% larger, needs glyphcast 0.25+
     --threshold 3         how much a cell may change before it is sent again; higher is smaller and blockier
     --no-crop             keep black bars (by default bars that stay black the whole video are cut)
 
@@ -58,9 +61,10 @@ const HELP: Record<string, string> = {
     Space pause   ←/→ 5 s   J/L 10 s   0-9 jump to 0%-90%   M render mode   G glyphs   S subtitles
     C colors   [ ] saturation   B background   Q quit; the status bar is clickable
   Sound plays through ffplay when it is installed.`,
-  publish: `glyphcast publish <file.gcast> --title "Name" [options]
+  publish: `glyphcast publish <file.gcast | video.mp4> --title "Name" [options]
 
-  Uploads to the gcast hub. Files over 95 MB go in parts; if the upload breaks, run the same
+  Uploads to the gcast hub. Give it a video instead of a .gcast and it encodes one itself: 180 columns with
+  details, sound and a poster, plus 120 and 240 columns for the quality menu (needs ffmpeg). Files over 95 MB go in parts; if the upload breaks, run the same
   command again and it continues from the last finished part.
 
   Options
@@ -117,7 +121,8 @@ const timeArg = (name: string, value: string): number => {
 const kb = (bytes: number): string => `${(bytes / 1024).toFixed(1)} KB`;
 
 const main = async (): Promise<void> => {
-  const { positionals, values } = parseArgs({
+  // eslint-disable-next-line prefer-const
+  let { positionals, values } = parseArgs({
     allowPositionals: true,
     options: {
       out: { type: 'string', short: 'o' },
@@ -128,6 +133,7 @@ const main = async (): Promise<void> => {
       embed: { type: 'boolean' },
       'no-crop': { type: 'boolean' },
       detail: { type: 'boolean' },
+      shades: { type: 'boolean' },
       poster: { type: 'boolean' },
       title: { type: 'string' },
       license: { type: 'string' },
@@ -147,7 +153,8 @@ const main = async (): Promise<void> => {
       help: { type: 'boolean', short: 'h' },
     },
   });
-  const [command, input] = positionals;
+  // eslint-disable-next-line prefer-const
+  let [command, input] = positionals;
   if (command === 'help' || (values.help && command)) {
     const topic = command === 'help' ? input : command;
     console.log((topic && HELP[topic]) ?? USAGE);
@@ -164,10 +171,29 @@ const main = async (): Promise<void> => {
   if (command === 'publish') {
     const key = process.env['GLYPHCAST_HUB_KEY'];
     if (!input || !values.title) throw new Error(HELP['publish']);
+    if (!/\.gcast$/i.test(input)) {
+      // a video goes in as is: encoded at 180 columns with details, sound and a poster, plus 120 and 240 columns
+      // for the quality menu, all in a temporary folder that is removed afterwards
+      const folder = mkdtempSync(join(tmpdir(), 'glyphcast-publish-'));
+      process.once('exit', () => rmSync(folder, { recursive: true, force: true }));
+      const main = join(folder, 'main.gcast');
+      console.log(`${basename(input)}: encoding 180 columns with sound and a poster`);
+      await encode(input, main, { cols: '180', detail: true, embed: true, poster: true, ...(values.start ? { start: values.start } : {}), ...(values.duration ? { duration: values.duration } : {}) });
+      const variants: string[] = [];
+      for (const cols of ['120', '240']) {
+        const out = join(folder, `v${cols}.gcast`);
+        console.log(`${basename(input)}: encoding ${cols} columns for the quality menu`);
+        await encode(input, out, { cols, detail: true, ...(values.start ? { start: values.start } : {}), ...(values.duration ? { duration: values.duration } : {}) });
+        variants.push(out);
+      }
+      values = { ...values, image: values.image ?? join(folder, 'main.jpg'), variant: [...(values.variant ?? []), ...variants] };
+      input = main;
+    }
     const auth: Record<string, string> = key ? { 'x-hub-key': key } : {};
     const { files } = await hub();
+    const file = input as string;
     const license = values.license ?? 'own';
-    const query = new URLSearchParams({ title: values.title, license, listed: license === 'own' ? '0' : '1' });
+    const query = new URLSearchParams({ title: values.title ?? '', license, listed: license === 'own' ? '0' : '1' });
     if (values.source) query.set('source', values.source);
     const retry = async <T>(what: string, run: () => Promise<T>): Promise<T> => {
       for (let attempt = 1; ; attempt += 1) {
@@ -180,7 +206,7 @@ const main = async (): Promise<void> => {
         }
       }
     };
-    const call = (url: string, init: RequestInit = {}, what = basename(input)): Promise<Record<string, unknown>> =>
+    const call = (url: string, init: RequestInit = {}, what = basename(file)): Promise<Record<string, unknown>> =>
       retry(what, async () => {
         const response = await fetch(url, { method: 'POST', ...init, headers: { ...auth, ...(init.headers as Record<string, string> | undefined) } });
         const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
@@ -237,14 +263,14 @@ const main = async (): Promise<void> => {
       }
       return started;
     };
-    const size = statSync(input).size;
+    const size = statSync(file).size;
     let entry: Record<string, unknown>;
-    if (size <= 16 * 1048576) entry = await call(`${files}/upload?${query}`, { body: readFileSync(input), headers: { 'content-type': 'application/octet-stream' } });
+    if (size <= 16 * 1048576) entry = await call(`${files}/upload?${query}`, { body: readFileSync(file), headers: { 'content-type': 'application/octet-stream' } });
     else {
-      const started = await deliver(input, {});
+      const started = await deliver(file, {});
       if (started.token) auth['x-edit-token'] = started.token;
       entry = await call(`${files}/parts/${started.id}/finish?${query}`);
-      rmSync(`${input}.upload.json`, { force: true });
+      rmSync(`${file}.upload.json`, { force: true });
     }
     if (entry['token']) auth['x-edit-token'] = String(entry['token']);
     const id = String(entry['id']);
@@ -436,7 +462,7 @@ const clock = (seconds: number): string => {
   return hours ? `${hours}:${rest}` : rest;
 };
 
-const encode = async (input: string, out: string, values: { readonly cols?: string; readonly fps?: string; readonly chunk?: string; readonly threshold?: string; readonly embed?: boolean; readonly 'no-crop'?: boolean; readonly detail?: boolean; readonly poster?: boolean; readonly audio?: string; readonly start?: string; readonly duration?: string }): Promise<void> => {
+const encode = async (input: string, out: string, values: { readonly cols?: string; readonly fps?: string; readonly chunk?: string; readonly threshold?: string; readonly embed?: boolean; readonly 'no-crop'?: boolean; readonly detail?: boolean; readonly shades?: boolean; readonly poster?: boolean; readonly audio?: string; readonly start?: string; readonly duration?: string }): Promise<void> => {
   const started = performance.now();
   const live = process.stdout.isTTY;
   let reported = 0;
@@ -460,6 +486,7 @@ const encode = async (input: string, out: string, values: { readonly cols?: stri
     ...(values.embed ? { embedAudio: true } : {}),
     ...(values['no-crop'] ? { crop: false } : {}),
     ...(values.detail ? { detail: true } : {}),
+    ...(values.shades ? { shades: true } : {}),
     ...(values.start ? { start: timeArg('start', values.start) } : {}),
     ...(values.duration ? { duration: timeArg('duration', values.duration) } : {}),
   });

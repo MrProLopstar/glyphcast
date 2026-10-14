@@ -262,3 +262,30 @@ it('keeps thin bright lines bright in detail cells', () => {
   expect(masks[0]).toBe(0b11);
   expect(cells[0]).toBe(255);
 });
+
+it('stores the dark side of patterned cells in version 4 detail streams', async () => {
+  const cols = 8;
+  const rows = 4;
+  const pixels = new Uint8Array(cols * 2 * rows * 4 * 3);
+  // the left half of every cell bright white, the right half dark red
+  for (let y = 0; y < rows * 4; y += 1) for (let x = 0; x < cols * 2; x += 1) {
+    const at = (y * cols * 2 + x) * 3;
+    if (x % 2 === 0) pixels.fill(255, at, at + 3);
+    else pixels[at] = 120;
+  }
+  const { cells, masks, shades } = detailMasks(pixels, cols, rows);
+  const encoder = new Encoder({ cols, rows, fps: 10, chunkFrames: 2, detail: true, shades: true });
+  encoder.add(cells, masks, shades);
+  encoder.add(cells, masks, shades);
+  const bytes = await encoder.finish();
+  const header = readHeader(bytes);
+  expect(header.shades).toBe(true);
+  const reader = new StreamReader();
+  const [chunk] = reader.push(bytes).filter((item) => item.frames > 0);
+  const decoded = await decodeChunkMotion(header, chunk?.data ?? new Uint8Array());
+  for (const frame of decoded.shades ?? []) {
+    expect(Math.abs((frame[0] ?? 0) - 120)).toBeLessThan(4);
+    expect(frame[1]).toBeLessThan(4);
+  }
+  expect(decoded.shades).toHaveLength(2);
+});

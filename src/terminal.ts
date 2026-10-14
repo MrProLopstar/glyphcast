@@ -55,7 +55,7 @@ export interface AnsiOptions {
   /** How much each cell's background takes its color, 0 for none. Default 0. */
   readonly fill?: number;
   /** Dot patterns of a detail stream on its own grid, drawn exactly in braille mode. */
-  readonly detail?: { readonly masks: Uint8Array; readonly cols: number; readonly rows: number; readonly pixels?: Uint8ClampedArray } | undefined;
+  readonly detail?: { readonly masks: Uint8Array; readonly cols: number; readonly rows: number; readonly pixels?: Uint8ClampedArray; readonly shades?: Uint8Array } | undefined;
   /** Height of a terminal cell divided by its width. Default 2.25. */
   readonly cellRatio?: number;
 }
@@ -157,6 +157,9 @@ export const ansiFrame = (pixels: Uint8Array | Uint8ClampedArray, cols: number, 
           const u = 1 / (grid?.cols ?? width);
           const v = 1 / (grid?.rows ?? height);
           const darkSide = (): number[] => {
+            // version 4 files carry the dark dots' color; older files estimate it from the neighbors
+            const stored = grid?.shades ? [grid.shades[cell * 3] ?? 0, grid.shades[cell * 3 + 1] ?? 0, grid.shades[cell * 3 + 2] ?? 0] : null;
+            if (stored && stored[0]! + stored[1]! + stored[2]! > 0) return stored;
             // the stored color is the bright dots'; the gaps are closest to the neighbors darker than it
             const cx = (x + 0.5) / width;
             const cy = (y + 0.5) / height;
@@ -726,6 +729,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         if (next) void frames(next).catch(() => undefined);
         let frame = decoded?.frames[index - piece.start];
         const masks = decoded?.detail?.[index - piece.start];
+        const shades = decoded?.shades?.[index - piece.start];
         if (frame && half) {
           const following = index + 1 < piece.start + piece.frames ? decoded : next && cache.has(next.start) ? await frames(next).catch(() => null) : null;
           const at = index + 1 - (following === decoded ? piece.start : (next?.start ?? 0));
@@ -757,7 +761,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
             boost: look.boost,
             fill: FILLS[look.fill] ?? 0,
             cellRatio,
-            detail: masks ? { masks, cols: info.cols, rows: info.rows, pixels: shown$ } : undefined,
+            detail: masks ? { masks, cols: info.cols, rows: info.rows, pixels: shown$, ...(shades ? { shades } : {}) } : undefined,
           });
           if (!output.write(text.split('\n').map((line, row) => `\x1b[${top + row + 1};${left + 1}H${line}`).join(''))) await new Promise((resolve) => output.once('drain', resolve));
           if (caption) {

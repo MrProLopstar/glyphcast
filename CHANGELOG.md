@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.0
+
+- `glc publish video.mp4` encodes and uploads in one go: 180 columns with details, sound and a poster, plus 120 and 240 columns for the quality menu
+- New scenes start new chunks with a key frame: cleaner cuts, seeking lands on scene starts, slightly smaller files
+- `--shades` (with `--detail`) also stores the color of the dark side of patterned cells; such files use format version 4 and are 20-45% larger. Plain `--detail` files keep version 3
+
 ## 0.24.0
 
 - `glc hub` opens a menu in the terminal: arrows choose, typing searches, Enter plays, the list comes back after the video

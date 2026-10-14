@@ -1,5 +1,7 @@
 export const MAGIC = 0x54534347;
 export const VERSION = 3;
+/** Detail streams with a second (dark side) color per patterned cell, written with `shades: true`, use version 4. */
+export const DETAIL_VERSION = 4;
 export const HEADER_SIZE = 20;
 const CHUNK_HEAD = 6;
 const INDEX_FRAMES = 0xffff;
@@ -27,6 +29,8 @@ export interface StreamInfo {
   readonly threshold: number;
   /** Frames carry a 2×4 dot pattern per cell taken from the source, for sharp text and lines. */
   readonly detail?: boolean;
+  /** Version 4 detail streams: each patterned cell also stores the color of its dark dots. */
+  readonly shades?: boolean;
 }
 
 export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshold'> {
@@ -34,6 +38,8 @@ export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshol
   readonly threshold?: number;
   /** Total frames if known in advance, written to the header. Default 0 (unknown). */
   readonly frameCount?: number;
+  /** With `detail`: also store the dark side color of patterned cells (format version 4, about 20–35% larger). */
+  readonly shades?: boolean;
   /** Raw deflate for chunks; Node passes zlib at level 9, which is a few percent smaller. Default CompressionStream. */
   readonly compress?: (data: Uint8Array) => Promise<Uint8Array>;
 }
@@ -212,7 +218,7 @@ export const writeHeader = (info: StreamInfo): Uint8Array => {
   const out = new Uint8Array(HEADER_SIZE);
   const view = new DataView(out.buffer);
   view.setUint32(0, MAGIC, true);
-  view.setUint8(4, VERSION);
+  view.setUint8(4, info.detail && info.shades ? DETAIL_VERSION : VERSION);
   view.setUint8(5, info.threshold | (info.detail ? 128 : 0));
   view.setUint16(6, info.cols, true);
   view.setUint16(8, info.rows, true);
@@ -228,7 +234,7 @@ export const readHeader = (bytes: Uint8Array): StreamInfo => {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (view.getUint32(0, true) !== MAGIC) throw new GlyphcastError('Not a .gcast stream');
   const version = view.getUint8(4);
-  if (version !== VERSION) throw new GlyphcastError(`Unsupported .gcast version ${version}`);
+  if (version !== VERSION && version !== DETAIL_VERSION) throw new GlyphcastError(`Unsupported .gcast version ${version}; update glyphcast`);
   const info = {
     cols: view.getUint16(6, true),
     rows: view.getUint16(8, true),
@@ -237,6 +243,7 @@ export const readHeader = (bytes: Uint8Array): StreamInfo => {
     frameCount: view.getUint32(16, true),
     threshold: view.getUint8(5) & 127,
     detail: (view.getUint8(5) & 128) !== 0,
+    shades: version >= DETAIL_VERSION && (view.getUint8(5) & 128) !== 0,
   };
   validate(info);
   return info;
@@ -315,6 +322,20 @@ export class StreamReader {
  *
  * `onChunk` receives each finished chunk, ready for a file or an HTTP response; `finish()` also returns a whole file.
  */
+/** True when the brightness changed so much on average that the picture is a different shot. */
+const sceneCut = (now: ArrayLike<number>, before: ArrayLike<number>): boolean => {
+  let change = 0;
+  let level = 0;
+  const step = Math.max(1, Math.floor(now.length / 4000));
+  let count = 0;
+  for (let at = 0; at < now.length; at += step) {
+    change += Math.abs((now[at] ?? 0) - (before[at] ?? 0));
+    level += now[at] ?? 0;
+    count += 1;
+  }
+  return change / count > Math.max(6, (level / count) * 0.3);
+};
+
 export class Encoder {
   readonly info: StreamInfo;
   private readonly shape: Layout;
@@ -332,7 +353,7 @@ export class Encoder {
   private readonly compress: EncodeOptions['compress'];
 
   constructor(options: EncodeOptions, private readonly onChunk?: (bytes: Uint8Array) => void) {
-    this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0, threshold: options.threshold ?? 3, detail: options.detail ?? false };
+    this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0, threshold: options.threshold ?? 3, detail: options.detail ?? false, shades: Boolean(options.detail && options.shades) };
     this.compress = options.compress;
     validate(this.info);
     this.shape = layout(options.cols, options.rows);
@@ -362,13 +383,16 @@ export class Encoder {
    * Adds a frame of `cols × rows` pixels, 3 or 4 bytes per pixel. Streams with `detail` also take one byte per cell:
    * bit `y * 2 + x` is set where the cell's 2×4 sub-pixel is brighter than the cell, see `detailMasks`.
    */
-  add(pixels: Uint8Array | Uint8ClampedArray, masks?: Uint8Array): void {
+  add(pixels: Uint8Array | Uint8ClampedArray, masks?: Uint8Array, shades?: Uint8Array): void {
     const shape = this.shape;
     const cells = shape.cols * shape.rows;
     const stride = pixels.length / cells;
     if (stride !== 3 && stride !== 4) throw new GlyphcastError(`A frame must have ${cells * 3} or ${cells * 4} bytes, got ${pixels.length}`);
-    const key = this.inChunk === 0;
     const current = toPlanes(pixels, stride, shape);
+    // a new scene starts a new chunk: its first frame is a key frame instead of a pile of residuals, and seeking
+    // lands on scene starts
+    if (this.inChunk >= Math.max(4, this.info.chunkFrames >> 2) && sceneCut(current.y, this.state.y)) this.flush();
+    const key = this.inChunk === 0;
     const reference = key ? planes(shape, true) : this.state;
     const next = planes(shape);
     const modes = new Uint8Array(shape.blocks);
@@ -440,6 +464,46 @@ export class Encoder {
       const { flags, explicit, next: patterns } = encodeMasks(shape, modes, reference, masks, key);
       this.masks = patterns;
       this.parts.push(flags, explicit);
+      if (this.info.shades) {
+      // dark colors of patterned cells, only where the players' guess from the neighbors (the average of the darker
+      // neighbors) is far off: edges between two strong colors, letters over a colored scene. Elsewhere players guess.
+      const darkFlags = new Uint8Array(Math.ceil(shape.blocks / 8));
+      const darks: number[] = [];
+      const color = (index: number, channel: number): number => pixels[index * stride + channel] ?? 0;
+      const lumaOf = (index: number): number => color(index, 0) * 0.299 + color(index, 1) * 0.587 + color(index, 2) * 0.114;
+      const guessWrong = (index: number): boolean => {
+        const x = index % shape.cols;
+        const y = Math.floor(index / shape.cols);
+        const own = lumaOf(index);
+        const sum = [0, 0, 0];
+        let count = 0;
+        for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]] as const) {
+          if (nx < 0 || ny < 0 || nx >= shape.cols || ny >= shape.rows) continue;
+          const near = ny * shape.cols + nx;
+          if (lumaOf(near) >= own - 10) continue;
+          for (let channel = 0; channel < 3; channel += 1) sum[channel] = (sum[channel] ?? 0) + color(near, channel);
+          count += 1;
+        }
+        for (let channel = 0; channel < 3; channel += 1) {
+          const guess = count ? (sum[channel] ?? 0) / count : color(index, channel) * 0.5;
+          if (Math.abs(guess - (shades?.[index * 3 + channel] ?? 0)) > 40) return true;
+        }
+        return false;
+      };
+      for (let block = 0; block < shape.blocks; block += 1) {
+        let wrong = false;
+        blockCells(shape, block, (index) => {
+          if (!wrong && patterns[index]) wrong = guessWrong(index);
+        });
+        if (!wrong) continue;
+        darkFlags[block >> 3] = (darkFlags[block >> 3] ?? 0) | (1 << (block & 7));
+        blockCells(shape, block, (index) => {
+          if (!patterns[index]) return;
+          for (let channel = 0; channel < 3; channel += 1) darks.push((shades?.[index * 3 + channel] ?? 0) >> 2);
+        });
+      }
+      this.parts.push(darkFlags, Uint8Array.from(darks));
+      }
     }
     this.frames += 1;
     this.inChunk += 1;
@@ -552,10 +616,12 @@ export interface DecodedChunk {
   readonly motion: Int8Array[];
   /** Dot patterns per cell for detail streams. */
   readonly detail?: Uint8Array[];
+  /** RGB of the dark dots per cell, version 4 detail streams only. */
+  readonly shades?: Uint8Array[];
 }
 
 /** Like `decodeChunk`, and also returns where each block of each frame came from in the previous one. */
-export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold' | 'detail'>, compressed: Uint8Array): Promise<DecodedChunk> => {
+export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold' | 'detail' | 'shades'>, compressed: Uint8Array): Promise<DecodedChunk> => {
   const raw = await inflate(compressed);
   const shape = layout(info.cols, info.rows);
   const { size } = steps(info.threshold);
@@ -563,6 +629,7 @@ export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' |
   const motion: Int8Array[] = [];
   const detail: Uint8Array[] = [];
   let patterns = new Uint8Array(info.cols * info.rows);
+  const shades: Uint8Array[] = [];
   let state = planes(shape);
   let at = 0;
   while (at < raw.length) {
@@ -632,11 +699,27 @@ export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' |
         });
       }
       if (at > raw.length) throw new GlyphcastError('Truncated frame');
+      if (info.shades) {
+        // zero means "not stored": players then guess from the neighbors as they do for older files
+        const next = new Uint8Array(masks.length * 3);
+        const darkFlags = raw.subarray(at, at + Math.ceil(shape.blocks / 8));
+        at += darkFlags.length;
+        for (let block = 0; block < shape.blocks; block += 1) {
+          if (!(((darkFlags[block >> 3] ?? 0) >> (block & 7)) & 1)) continue;
+          blockCells(shape, block, (index) => {
+            if (!masks[index]) return;
+            for (let channel = 0; channel < 3; channel += 1) next[index * 3 + channel] = ((raw[at + channel] ?? 0) << 2) | 2;
+            at += 3;
+          });
+        }
+        if (at > raw.length) throw new GlyphcastError('Truncated frame');
+        shades.push(next);
+      }
       patterns = masks;
       detail.push(masks);
     }
   }
-  return info.detail ? { frames, motion, detail } : { frames, motion };
+  return info.detail ? { frames, motion, detail, ...(info.shades ? { shades } : {}) } : { frames, motion };
 };
 
 const blockCells = (shape: Layout, block: number, each: (index: number, x: number, y: number) => void): void => {
@@ -681,11 +764,12 @@ const encodeMasks = (shape: Layout, modes: Uint8Array, reference: Uint8Array, ma
  * RGBA: one byte per cell, bit `y * 2 + x` set where that sub-pixel is clearly brighter than the cell's average. Such cells carry the color of their bright dots.
  * Flat cells get 0, so players fall back to their usual drawing there.
  */
-export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number, rows: number, stride = 3, previous?: number): { readonly cells: Uint8ClampedArray; readonly masks: Uint8Array; readonly bar: number } => {
+export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number, rows: number, stride = 3, previous?: number): { readonly cells: Uint8ClampedArray; readonly masks: Uint8Array; readonly shades: Uint8Array; readonly bar: number } => {
   const width = cols * 2;
   const count = cols * rows;
   const cells = new Uint8ClampedArray(count * 4);
   const masks = new Uint8Array(count);
+  const shades = new Uint8Array(count * 3);
   const lumas = new Float32Array(count * 8);
   const spreads = new Float32Array(count);
   const offset = (cell: number, dot: number): number => ((Math.floor(cell / cols) * 4 + (dot >> 1)) * width + (cell % cols) * 2 + (dot & 1)) * stride;
@@ -733,8 +817,17 @@ export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number
     let r = 0;
     let g = 0;
     let b = 0;
+    let dr = 0;
+    let dg = 0;
+    let db = 0;
     for (let dot = 0; dot < 8; dot += 1) {
-      if ((lumas[cell * 8 + dot] ?? 0) <= middle) continue;
+      if ((lumas[cell * 8 + dot] ?? 0) <= middle) {
+        const at = offset(cell, dot);
+        dr += pixels[at] ?? 0;
+        dg += pixels[at + 1] ?? 0;
+        db += pixels[at + 2] ?? 0;
+        continue;
+      }
       mask |= 1 << dot;
       lit += 1;
       const at = offset(cell, dot);
@@ -747,8 +840,13 @@ export const detailMasks = (pixels: Uint8Array | Uint8ClampedArray, cols: number
     cells[cell * 4 + 1] = g / lit;
     cells[cell * 4 + 2] = b / lit;
     masks[cell] = mask;
+    // the dark dots' own color, so players draw both sides of an edge as they are
+    const dark = 8 - lit;
+    shades[cell * 3] = dr / dark;
+    shades[cell * 3 + 1] = dg / dark;
+    shades[cell * 3 + 2] = db / dark;
   }
-  return { cells, masks, bar };
+  return { cells, masks, shades, bar };
 };
 
 /**

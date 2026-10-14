@@ -27,6 +27,8 @@ export interface EncodeVideoOptions {
   readonly embedAudio?: boolean;
   /** Store a 2×4 dot pattern per cell from the source, so text and thin lines stay sharp in braille. Default false. */
   readonly detail?: boolean;
+  /** With `detail`: also store the dark side color of patterned cells (format version 4, larger files). */
+  readonly shades?: boolean;
   /** Embed the first text subtitle track of the video, if it has one. Default true. */
   readonly subtitles?: boolean;
   /** Cut black bars that stay black through the whole video. Default true. */
@@ -121,7 +123,7 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const cropped = area.width !== probed.width || area.height !== probed.height ? `crop=${area.width}:${area.height}:${area.x}:${area.y},` : '';
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
   let frames = 0;
-  const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), detail: options.detail ?? false, compress: deflate9, ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
+  const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), detail: options.detail ?? false, shades: options.shades ?? false, compress: deflate9, ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
   if (options.subtitles !== false) {
     const text = await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', ...piece(input, options), '-map', '0:s:0', '-f', 'webvtt', 'pipe:1']).catch(() => '');
     if (text.includes('-->')) encoder.addSubtitles(text);
@@ -144,9 +146,9 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
     pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
     while (pending.length >= frameSize) {
       if (detail) {
-        const { cells, masks, bar: next } = detailMasks(pending.subarray(0, frameSize), cols, rows, 3, bar);
+        const { cells, masks, shades, bar: next } = detailMasks(pending.subarray(0, frameSize), cols, rows, 3, bar);
         bar = next;
-        encoder.add(cells, masks);
+        encoder.add(cells, masks, shades);
       } else encoder.add(pending.subarray(0, frameSize));
       pending = pending.subarray(frameSize);
       frames += 1;

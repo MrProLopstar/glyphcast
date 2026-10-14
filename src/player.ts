@@ -66,6 +66,9 @@ export const sourceFor = (src: string, audio?: string): Source =>
 
 const AHEAD = 20;
 
+/** Dark-side colors of version 4 detail frames, keyed by the frame's masks. */
+const shadesOf = new WeakMap<Uint8Array, Uint8Array>();
+
 type FrameVideo = HTMLVideoElement & { requestVideoFrameCallback?: (callback: () => void) => number };
 
 interface StreamState {
@@ -737,7 +740,7 @@ export class GlyphPlayer extends EventTarget {
       this.renderer.setCaption(caption);
     }
     const sharp = this.look.sharp;
-    this.renderer.draw(sharp ? upscale2x(pixels, cols, rows) : pixels, cols, rows, { detail: sharp ? 2 : 1, levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt, fill: this.look.fill, masks: masks ?? null });
+    this.renderer.draw(sharp ? upscale2x(pixels, cols, rows) : pixels, cols, rows, { detail: sharp ? 2 : 1, levels: this.levels, boost: this.look.boost, tint: this.look.tint, mode: this.look.mode, edges: this.look.edges, crt: this.look.crt, fill: this.look.fill, masks: masks ?? null, shades: (masks && shadesOf.get(masks)) ?? null });
   }
 
   private steady(pixels: Uint8ClampedArray): Uint8ClampedArray {
@@ -830,6 +833,8 @@ export class GlyphPlayer extends EventTarget {
     let pending = stream.decoded.get(chunk.start);
     if (!pending) {
       pending = decodeChunkMotion(info, chunk.data);
+      // each frame's dark-side colors travel with its masks, so every place that paints masks gets them too
+      void pending.then((decoded) => decoded.shades?.forEach((shades, at) => decoded.detail?.[at] && shadesOf.set(decoded.detail[at]!, shades))).catch(() => undefined);
       stream.decoded.set(chunk.start, pending);
       for (const key of stream.decoded.keys()) if (Math.abs(key - chunk.start) > info.chunkFrames * 3) stream.decoded.delete(key);
     }

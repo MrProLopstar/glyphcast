@@ -36,6 +36,8 @@ export interface FrameStyle {
   readonly detail?: number;
   /** Dot patterns from a detail stream, one byte per grid cell, drawn exactly in braille mode. */
   readonly masks?: Uint8Array | null;
+  /** RGB of the dark dots of patterned cells (version 4 detail streams). */
+  readonly shades?: Uint8Array | null;
 }
 
 const VERTEX = `#version 300 es
@@ -55,6 +57,8 @@ uniform sampler2D atlas;
 uniform sampler2D overlay;
 uniform sampler2D patterns;
 uniform float detailed;
+uniform sampler2D shades;
+uniform float shaded;
 uniform vec2 grid;
 uniform float glyphs;
 uniform float brightness;
@@ -127,6 +131,11 @@ void main() {
         count += weight;
       }
       dark = count > 0.0 ? sum / count : source * 0.5;
+      // version 4 files store the dark dots' color where this estimate would be wrong (zero elsewhere)
+      if (shaded > 0.5) {
+        vec3 stored = texelFetch(shades, ivec2(cell), 0).rgb;
+        if (stored.r + stored.g + stored.b > 0.0) dark = stored;
+      }
       under = paint(dark, leveled(dot(dark, WEIGHTS))) * 0.5;
     }
     vec2 inside = (fract(local * vec2(2.0, 4.0)) - 0.5) * vec2(1.2, 1.0);
@@ -200,6 +209,7 @@ export class GlyphRenderer {
   private readonly gl: WebGL2RenderingContext;
   private readonly cellsTexture: WebGLTexture;
   private readonly patternsTexture: WebGLTexture;
+  private readonly shadesTexture: WebGLTexture;
   private readonly uniforms: Readonly<Record<string, WebGLUniformLocation | null>>;
   private cols = 0;
   private rows = 0;
@@ -231,19 +241,21 @@ export class GlyphRenderer {
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
 
     this.uniforms = Object.fromEntries(
-      ['cells', 'atlas', 'overlay', 'grid', 'glyphs', 'brightness', 'contrast', 'boost', 'background', 'tint', 'mode', 'edges', 'crt', 'captions', 'fill', 'patterns', 'detailed'].map((name) => [name, gl.getUniformLocation(program, name)]),
+      ['cells', 'atlas', 'overlay', 'grid', 'glyphs', 'brightness', 'contrast', 'boost', 'background', 'tint', 'mode', 'edges', 'crt', 'captions', 'fill', 'patterns', 'detailed', 'shades', 'shaded'].map((name) => [name, gl.getUniformLocation(program, name)]),
     );
 
     this.cellsTexture = this.texture(0);
     this.texture(1);
     this.texture(2);
     this.patternsTexture = this.texture(3);
+    this.shadesTexture = this.texture(4);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.uniform1i(this.uniforms['cells'] ?? null, 0);
     gl.uniform1i(this.uniforms['atlas'] ?? null, 1);
     gl.uniform1i(this.uniforms['overlay'] ?? null, 2);
     gl.uniform1i(this.uniforms['patterns'] ?? null, 3);
+    gl.uniform1i(this.uniforms['shades'] ?? null, 4);
     this.setGlyphs(this.glyphs);
     this.setBackground(options.background ?? '#05070a');
   }
@@ -373,6 +385,14 @@ export class GlyphRenderer {
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, this.patternsTexture);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, cols, rows, 0, gl.RED, gl.UNSIGNED_BYTE, masks);
+    }
+    const shades = masks && style.shades && style.shades.length === cols * rows * 3 ? style.shades : null;
+    gl.uniform1f(this.uniforms['shaded'] ?? null, shades ? 1 : 0);
+    if (shades) {
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D, this.shadesTexture);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, cols, rows, 0, gl.RGB, gl.UNSIGNED_BYTE, shades);
     }
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }

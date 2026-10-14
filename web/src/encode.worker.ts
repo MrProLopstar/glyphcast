@@ -19,7 +19,7 @@ self.addEventListener('message', async ({ data }: MessageEvent) => {
         if (detail) {
           const found = detailMasks(pixels, cols, rows, 4, bar);
           bar = found.bar;
-          encoder.add(found.cells, found.masks);
+          encoder.add(found.cells, found.masks, found.shades);
         } else encoder.add(pixels);
       }
     } else if (data.type === 'audio' && encoder) encoder.addAudio(new Uint8Array(data.bytes));
