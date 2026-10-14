@@ -75,7 +75,7 @@ const HELP: Record<string, string> = {
     --subtitles file.vtt  subtitles
     --variant file.gcast  the same video in another grid width, for the quality menu; repeatable
     --replace <id>        put a new file (for example a re-encode) into an existing video: same code, title,
-                          views and votes; needs the hub key or the video's edit token
+                          views and votes; only with the hub key (GLYPHCAST_HUB_KEY)
     --source URL          link to the original (YouTube and so on), shown in the player
 
   GLYPHCAST_HUB_KEY gives admin rights (listing right away); without it uploads go to review.`,
