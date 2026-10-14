@@ -2,6 +2,7 @@ import { audioType, decodeChunkMotion, GlyphcastError, interpolate, type Decoded
 import { autoLevels, ease, NEUTRAL, type Levels } from './levels.js';
 import { captionAt, parseCaptions, type Cue } from './captions.js';
 import { DEFAULT_GLYPHS, GlyphRenderer, type RenderMode } from './renderer.js';
+import { OggTrack } from './track.js';
 import { upscale2x } from './upscale.js';
 
 export interface LookOptions {
@@ -107,6 +108,7 @@ export class GlyphPlayer extends EventTarget {
   private ended = false;
   private mediaClock = false;
   private stalled = false;
+  private track: OggTrack | null = null;
   private cues: readonly Cue[] = [];
   private readonly previews = new Map<number, { readonly pixels: Uint8ClampedArray; readonly cols: number; readonly rows: number }>();
   private previous: Uint8ClampedArray | null = null;
@@ -335,7 +337,35 @@ export class GlyphPlayer extends EventTarget {
       this.emit('loadedmetadata');
       this.emit('durationchange');
       this.draw();
-      void this.loadSound(state, soundStart, first.offset - 1, info);
+      // Ogg sound plays window by window from where the picture is; other sound types load whole as before
+      const kind = start.length >= soundStart + 10 && start[soundStart + 6] === 0x4f && start[soundStart + 7] === 0x67 && start[soundStart + 8] === 0x67 && start[soundStart + 9] === 0x53;
+      if (kind && typeof AudioContext !== 'undefined') {
+        const piece = view.getUint32(soundStart, true);
+        const region = first.offset - soundStart;
+        const count = Math.ceil(region / (piece + 6));
+        const size = region - count * 6;
+        // the sound is cut into pieces of `piece` bytes, each behind a 6-byte chunk head: map sound bytes to file bytes
+        const at = (position: number): number => soundStart + Math.floor(position / piece) * (piece + 6) + 6 + (position % piece);
+        const read = async (from: number, to: number): Promise<Uint8Array> => {
+          const last = Math.min(size - 1, to);
+          const response = await fetch(state.url, { headers: { range: `bytes=${at(from)}-${at(last)}` }, signal: state.abort.signal });
+          if (response.status !== 206) throw new GlyphcastError(`Sound range: HTTP ${response.status}`);
+          const raw = new Uint8Array(await response.arrayBuffer());
+          const out = new Uint8Array(last - from + 1);
+          for (let done = 0; done < out.length; ) {
+            const take = Math.min(out.length - done, piece - ((from + done) % piece));
+            const offset = at(from + done) - at(from);
+            out.set(raw.subarray(offset, offset + take), done);
+            done += take;
+          }
+          return out;
+        };
+        this.track = new OggTrack(read, 0, size, this.duration, () => this.currentTime);
+        this.track.volume = this.media.volume;
+        this.track.muted = this.media.muted;
+        if (!this.paused) void this.track.play(this.currentTime, this.rate);
+        else this.track.prepare(this.currentTime);
+      } else void this.loadSound(state, soundStart, first.offset - 1, info);
       return true;
     } catch (error) {
       if (state.abort.signal.aborted || state.reader.info) throw error;
@@ -477,6 +507,8 @@ export class GlyphPlayer extends EventTarget {
 
   private unload(): void {
     this.pauseLoop();
+    this.track?.close();
+    this.track = null;
     this.previews.clear();
     this.previous = null;
     this.stalled = false;
@@ -548,6 +580,7 @@ export class GlyphPlayer extends EventTarget {
 
   set volume(value: number) {
     this.media.volume = Math.min(1, Math.max(0, value));
+    if (this.track) this.track.volume = this.media.volume;
   }
 
   get muted(): boolean {
@@ -556,6 +589,7 @@ export class GlyphPlayer extends EventTarget {
 
   set muted(value: boolean) {
     this.media.muted = value;
+    if (this.track) this.track.muted = value;
   }
 
   get playbackRate(): number {
@@ -566,6 +600,7 @@ export class GlyphPlayer extends EventTarget {
     if (this.stream && !this.hasAudio) {
       this.syncClock();
       this.rate = value;
+      if (this.track && !this.paused) void this.track.play(this.currentTime, value);
       this.emit('ratechange');
     } else {
       this.media.playbackRate = value;
@@ -590,12 +625,14 @@ export class GlyphPlayer extends EventTarget {
       this.emit('playing');
     }
     this.startLoop();
+    if (this.track) void this.track.play(this.currentTime, this.rate);
   }
 
   pause(): void {
     if (this.stream && !this.hasAudio) {
       if (this.loop === null) return;
       this.syncClock();
+      this.track?.stop();
       this.pauseLoop();
       this.emit('pause');
       return;
@@ -626,6 +663,8 @@ export class GlyphPlayer extends EventTarget {
     if (info && !stream.source.restart) void this.jump(stream, Math.floor((time - stream.offset) * info.fps));
     stream.clockAt = time;
     stream.clockStart = performance.now();
+    if (this.track && !this.paused && !this.stalled) void this.track.play(time, this.rate);
+    else this.track?.prepare(time);
     this.shownFrame = -1;
     if (info) this.draw();
     this.emit('timeupdate');
@@ -672,11 +711,13 @@ export class GlyphPlayer extends EventTarget {
       stream.clockAt = this.currentTime;
       this.stalled = true;
       if (this.hasAudio) this.media.pause();
+      this.track?.stop();
       this.emit('waiting');
     } else if (this.stalled && (end || ahead > enough)) {
       this.stalled = false;
       stream.clockStart = performance.now();
       if (this.hasAudio) void this.media.play().catch(() => undefined);
+      if (this.track) void this.track.play(this.currentTime, this.rate);
       this.emit('playing');
     }
   }

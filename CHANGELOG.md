@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.23.0
+
+- Embedded sound plays like mp4 audio: only the part around the playback time is fetched, decoded in 10-second windows and scheduled exactly with the picture. A film's sound starts and seeks at once instead of after downloading the whole track
+
 ## 0.22.1
 
 - Live broadcasts play smoothly: the player no longer waits for 5 s in reserve, which a live stream never has
