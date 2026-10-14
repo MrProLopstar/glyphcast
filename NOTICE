@@ -2,7 +2,8 @@ glyphcast
 Copyright 2026 MrProLopstar
 
 This product includes software developed by MrProLopstar.
-Versions up to and including 0.20.13 were released under the MIT License.
+Released under the Mozilla Public License 2.0. Versions up to and including 0.20.13 were released
+under the MIT License, versions 0.21.0 to 0.21.3 under the Apache License 2.0.
 
 "glyphcast", "gcast" and "glc" are names of this project; the license does not grant
-permission to use them for other products (see section 6 of the License).
+permission to use them for other products (MPL 2.0 section 2.3 grants no trademark rights).

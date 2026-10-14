@@ -113,4 +113,4 @@ npx glyphcast play hub:<имя>       # смотреть со звуком, па
 
 ## Лицензия
 
-Apache License 2.0 (см. LICENSE и NOTICE). Версии до 0.20.13 включительно вышли под MIT.
+Mozilla Public License 2.0 (см. LICENSE и NOTICE): изменения в файлах glyphcast остаются открытыми, ваш код вокруг может быть закрытым. Версии до 0.20.13 вышли под MIT, 0.21.0–0.21.3 — под Apache 2.0.

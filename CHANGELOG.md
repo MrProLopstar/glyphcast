@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.0
+
+- License changed to the Mozilla Public License 2.0: changes to glyphcast files stay open, code around it may stay closed
+
 ## 0.21.3
 
 - Terminal: letters on colored backgrounds get no dark halo, the gaps around them are dimmed like their neighbors
