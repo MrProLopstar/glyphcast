@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.1
+
+- Live broadcasts play smoothly: the player no longer waits for 5 s in reserve, which a live stream never has
+
 ## 0.22.0
 
 - License changed to the Mozilla Public License 2.0: changes to glyphcast files stay open, code around it may stay closed

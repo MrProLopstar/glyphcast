@@ -663,13 +663,17 @@ export class GlyphPlayer extends EventTarget {
   private buffer(stream: StreamState): void {
     const ahead = this.bufferedEnd - this.currentTime;
     const end = this.reachesEnd(stream);
-    if (!this.stalled && !end && ahead < 0.3) {
+    // a live broadcast never has seconds in reserve: it waits for the next chunk and goes on as soon as it arrives
+    const live = !stream.reader.info?.frameCount && !stream.source.duration;
+    const low = live ? 0.02 : 0.3;
+    const enough = live ? 0.2 : 5;
+    if (!this.stalled && !end && ahead < low) {
       // wait with a loader instead of running the clock past the downloaded frames
       stream.clockAt = this.currentTime;
       this.stalled = true;
       if (this.hasAudio) this.media.pause();
       this.emit('waiting');
-    } else if (this.stalled && (end || ahead > 5)) {
+    } else if (this.stalled && (end || ahead > enough)) {
       this.stalled = false;
       stream.clockStart = performance.now();
       if (this.hasAudio) void this.media.play().catch(() => undefined);
