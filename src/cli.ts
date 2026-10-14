@@ -55,7 +55,7 @@ const HELP: Record<string, string> = {
     --ffmpeg path         ffmpeg to use
 
   Keys
-    Space pause   ←/→ 5 s   J/L 10 s   0-9 jump to 0%-90%   M render mode   G glyphs
+    Space pause   ←/→ 5 s   J/L 10 s   0-9 jump to 0%-90%   M render mode   G glyphs   S subtitles
     C colors   [ ] saturation   B background   Q quit; the status bar is clickable
   Sound plays through ffplay when it is installed.`,
   publish: `glyphcast publish <file.gcast> --title "Name" [options]
@@ -75,7 +75,8 @@ const HELP: Record<string, string> = {
   GLYPHCAST_HUB_KEY gives admin rights (listing right away); without it uploads go to review.`,
   hub: `glyphcast hub [search]
 
-  Lists open videos in the gcast hub. Play one with glc play hub:<name>.`,
+  Opens the list of videos in the gcast hub: arrows choose, typing searches, Enter plays,
+  Esc quits; the list comes back after each video. Outside a terminal it prints the list.`,
   info: `glyphcast info <file.gcast>
 
   Grid size, frame rate, length, chunks and embedded sound of a file.`,
@@ -259,13 +260,23 @@ const main = async (): Promise<void> => {
     return;
   }
   if (command === 'hub') {
-    const { files, videos } = await hub();
-    const query = (input ?? '').toLowerCase();
-    const shown = videos.filter((video) => video.listed && video.title.toLowerCase().includes(query));
-    if (shown.length === 0) console.log(query ? `Nothing found for "${input}"` : 'The hub is empty');
-    for (const video of shown) console.log(`hub:${video.slug.padEnd(32)} ${clock(video.duration).padStart(8)}  ${video.title}  [${video.license}]`);
-    if (shown.length > 0) console.log(`
-glyphcast play hub:<name>   files from ${files}`);
+    const { videos } = await hub();
+    const listed = videos.filter((video) => video.listed);
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      // an interactive list: arrows move, typing searches, Enter plays, the list comes back after the video
+      let query = input ?? '';
+      for (;;) {
+        const chosen = await pickVideo(listed, query);
+        if (!chosen) return;
+        query = chosen.query;
+        await playHub(chosen.video.id, values.ffmpeg);
+      }
+    }
+    const text = (input ?? '').toLowerCase();
+    const shown = listed.filter((video) => video.title.toLowerCase().includes(text));
+    if (shown.length === 0) console.log(text ? `Nothing found for "${input}"` : 'The hub is empty');
+    for (const video of shown) console.log(`${video.id}  ${clock(video.duration).padStart(8)}  ${video.title}`);
+    if (shown.length > 0) console.log('\nglc play hub:<id>');
     return;
   }
   if (values.help || !command || !input) {
@@ -280,18 +291,7 @@ glyphcast play hub:<name>   files from ${files}`);
       return;
     }
     if (input?.startsWith('hub:')) {
-      const name = input.slice(4);
-      const { files, videos } = await hub();
-      const video = videos.find((item) => item.slug === name || item.id === name);
-      const id = video?.id ?? name;
-      if (!/^[\w-]{11}$/.test(id)) throw new Error(`No video "${name}" in the hub; see glyphcast hub`);
-      if (video) console.log(video.title);
-      const subtitles = video?.subtitles ? await fetch(`${files}/v/${id}.vtt`).then((response) => (response.ok ? response.text() : undefined)).catch(() => undefined) : undefined;
-      const width = process.stdout.columns || 120;
-      const grids = [video?.cols ?? 0, ...(video?.variants ?? [])].filter((cols) => cols > 0).sort((a, b) => a - b);
-      const pick = grids.filter((cols) => cols <= width * 1.5).at(-1) ?? grids[0];
-      const file = video && pick && pick !== video.cols ? `${id}-${pick}` : id;
-      await playInTerminal(`${files}/v/${file}.gcast`, { title: video?.title ?? `hub:${name}`, ...(subtitles ? { subtitles } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
+      await playHub(input.slice(4), values.ffmpeg);
       return;
     }
     await playInTerminal(input, { ...(values.subtitles ? { subtitles: readFileSync(values.subtitles, 'utf8') } : {}), ...(values.cols ? { cols: number('cols', values.cols) } : {}), ...(values.fps ? { fps: number('fps', values.fps) } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}) });
@@ -344,6 +344,90 @@ const hub = async (): Promise<{ readonly files: string; readonly videos: HubVide
   if (!videos.ok) throw new Error(`The hub at ${files} does not answer`);
   return { files, videos: (await videos.json()) as HubVideo[] };
 };
+
+/** Plays a hub video in the terminal, picking the grid that suits the window. */
+const playHub = async (name: string, ffmpeg?: string): Promise<void> => {
+  const { files, videos } = await hub();
+  const video = videos.find((item) => item.slug === name || item.id === name);
+  const id = video?.id ?? name;
+  if (!/^[\w-]{11}$/.test(id)) throw new Error(`No video "${name}" in the hub; see glyphcast hub`);
+  const subtitles = video?.subtitles ? await fetch(`${files}/v/${id}.vtt`).then((response) => (response.ok ? response.text() : undefined)).catch(() => undefined) : undefined;
+  const width = process.stdout.columns || 120;
+  const grids = [video?.cols ?? 0, ...(video?.variants ?? [])].filter((cols) => cols > 0).sort((a, b) => a - b);
+  const pick = grids.filter((cols) => cols <= width * 1.5).at(-1) ?? grids[0];
+  const file = video && pick && pick !== video.cols ? `${id}-${pick}` : id;
+  await playInTerminal(`${files}/v/${file}.gcast`, { title: video?.title ?? `hub:${name}`, ...(subtitles ? { subtitles } : {}), ...(ffmpeg ? { ffmpeg } : {}) });
+};
+
+/** Columns a string takes in a terminal: CJK and emoji take two. */
+const cells = (text: string): number => [...text].reduce((sum, char) => sum + (/[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]|\p{Extended_Pictographic}/u.test(char) ? 2 : 1), 0);
+const fit = (text: string, width: number): string => {
+  let out = '';
+  for (const char of text) {
+    if (cells(out + char) > width - 1) return `${out}…`;
+    out += char;
+  }
+  return out + ' '.repeat(Math.max(0, width - cells(out)));
+};
+
+/** The hub list as a menu: ↑/↓ move, typing filters, Backspace edits, Enter picks, Esc quits. */
+const pickVideo = (videos: readonly HubVideo[], start: string): Promise<{ video: HubVideo; query: string } | null> =>
+  new Promise((resolve) => {
+    const output = process.stdout;
+    const input = process.stdin;
+    let query = start;
+    let at = 0;
+    let top = 0;
+    const found = () => videos.filter((video) => video.title.toLowerCase().includes(query.toLowerCase()));
+    const draw = () => {
+      const list = found();
+      const width = output.columns || 100;
+      const height = Math.max(3, (output.rows || 30) - 4);
+      at = Math.min(at, Math.max(0, list.length - 1));
+      if (at < top) top = at;
+      if (at >= top + height) top = at - height + 1;
+      let screen = '\x1b[H\x1b[2J';
+      screen += `\x1b[1m\x1b[38;2;240;160;75mgcast hub\x1b[0m   \x1b[2m↑↓ выбор · Enter смотреть · Esc выход · печатайте для поиска\x1b[0m\n`;
+      screen += `\x1b[38;2;154;160;168mПоиск:\x1b[0m ${query}\x1b[7m \x1b[0m\n\n`;
+      if (!list.length) screen += '\x1b[2mНичего не нашлось\x1b[0m\n';
+      const titleWidth = Math.max(20, width - 14);
+      list.slice(top, top + height).forEach((video, index) => {
+        const line = ` ${fit(video.title, titleWidth)}${clock(video.duration).padStart(9)} `;
+        screen += top + index === at ? `\x1b[48;2;240;160;75m\x1b[38;2;26;18;6m${line}\x1b[0m\n` : `${line}\n`;
+      });
+      output.write(screen);
+    };
+    const finish = (value: { video: HubVideo; query: string } | null) => {
+      input.off('data', key);
+      output.off('resize', draw);
+      input.setRawMode(false);
+      input.pause();
+      output.write('\x1b[?25h\x1b[?1049l');
+      resolve(value);
+    };
+    const key = (data: Buffer) => {
+      const text = data.toString();
+      const list = found();
+      if (text === '\u0003' || text === '\u001b') return finish(null);
+      if (text === '\r' || text === '\n') return list[at] ? finish({ video: list[at]!, query }) : undefined;
+      if (text === '\u001b[A') at = Math.max(0, at - 1);
+      else if (text === '\u001b[B') at = Math.min(list.length - 1, at + 1);
+      else if (text === '\u001b[5~') at = Math.max(0, at - 10);
+      else if (text === '\u001b[6~') at = Math.min(list.length - 1, at + 10);
+      else if (text === '\u007f' || text === '\b') query = [...query].slice(0, -1).join('');
+      else if (!text.startsWith('\u001b') && text >= ' ') {
+        query += text;
+        at = 0;
+      }
+      draw();
+    };
+    output.write('\x1b[?1049h\x1b[?25l');
+    input.setRawMode(true);
+    input.resume();
+    input.on('data', key);
+    output.on('resize', draw);
+    draw();
+  });
 
 const clock = (seconds: number): string => {
   const total = Math.max(0, Math.round(seconds));

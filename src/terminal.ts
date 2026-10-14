@@ -537,6 +537,8 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   const captions = options.subtitles ?? library.subtitles;
   const cues = captions ? parseCaptions(captions) : [];
   let caption: string | null = null;
+  // S turns subtitles on and off; they start on when the video has them
+  let showSubtitles = true;
   const input$ = process.stdin;
   let base = 0;
   let startedAt = performance.now();
@@ -666,6 +668,10 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
     else if (key === 'l') jump(now() + 10);
     else if (/^[0-9]$/.test(key)) jump((Number(key) / 10) * total());
     else if (key === 'm') look.mode = (look.mode + 1) % MODES.length;
+    else if (key === 's' && cues.length) {
+      showSubtitles = !showSubtitles;
+      redraw = true;
+    }
     else if (key === 'g') look.glyphs = (look.glyphs + 1) % GLYPH_SETS.length;
     else if (key === 'c') look.tint = (look.tint + 1) % TINTS.length;
     else if (key === '[') look.boost = Math.max(0, Math.round((look.boost - 0.1) * 10) / 10);
@@ -709,7 +715,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         if (playing) sound();
         redraw = true;
       }
-      const line$ = captionAt(cues, time)?.replace(/\s*\n\s*/g, ' ') ?? null;
+      const line$ = showSubtitles ? (captionAt(cues, time)?.replace(/\s*\n\s*/g, ' ') ?? null) : null;
       if (line$ !== caption) {
         caption = line$;
         redraw = true;
@@ -780,6 +786,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
         { text: `bg ${FILLS[look.fill]}`, act: () => (look.fill = (look.fill + 1) % FILLS.length) },
         { text: '2x', on: look.sharp, act: () => (look.sharp = !look.sharp) },
         { text: 'smooth', on: look.smooth, act: () => (look.smooth = !look.smooth) },
+        ...(cues.length ? [{ text: 'subs', on: showSubtitles, act: () => ((showSubtitles = !showSubtitles), (redraw = true)) }] : []),
         { text: '✕', act: () => (quit = true) },
       ];
       const widthOf = (segments: readonly Segment[]): number => segments.reduce((sum, segment) => sum + segment.text.length + 3, 0);
