@@ -173,7 +173,8 @@ const main = async (): Promise<void> => {
   }
   if (command === 'publish') {
     const key = process.env['GLYPHCAST_HUB_KEY'];
-    if (!input || !values.title) throw new Error(HELP['publish']);
+    // a replacement keeps the video's title, so --title is only needed for new videos
+    if (!input || (!values.title && !values.replace)) throw new Error(HELP['publish']);
     if (!/\.gcast$/i.test(input)) {
       // a video goes in as is: encoded at 180 columns with details, sound and a poster, plus 120 and 240 columns
       // for the quality menu, all in a temporary folder that is removed afterwards
