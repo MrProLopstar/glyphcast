@@ -74,6 +74,8 @@ const HELP: Record<string, string> = {
     --image poster.jpg    poster
     --subtitles file.vtt  subtitles
     --variant file.gcast  the same video in another grid width, for the quality menu; repeatable
+    --replace <id>        put a new file (for example a re-encode) into an existing video: same code, title,
+                          views and votes; needs the hub key or the video's edit token
     --source URL          link to the original (YouTube and so on), shown in the player
 
   GLYPHCAST_HUB_KEY gives admin rights (listing right away); without it uploads go to review.`,
@@ -141,6 +143,7 @@ const main = async (): Promise<void> => {
       subtitles: { type: 'string' },
       source: { type: 'string' },
       variant: { type: 'string', multiple: true },
+      replace: { type: 'string' },
       audio: { type: 'string' },
       port: { type: 'string' },
       host: { type: 'string' },
@@ -265,9 +268,10 @@ const main = async (): Promise<void> => {
     };
     const size = statSync(file).size;
     let entry: Record<string, unknown>;
-    if (size <= 16 * 1048576) entry = await call(`${files}/upload?${query}`, { body: readFileSync(file), headers: { 'content-type': 'application/octet-stream' } });
+    if (size <= 16 * 1048576 && !values.replace) entry = await call(`${files}/upload?${query}`, { body: readFileSync(file), headers: { 'content-type': 'application/octet-stream' } });
     else {
-      const started = await deliver(file, {});
+      // --replace <id> swaps the file of an existing video and keeps its code, title, views and votes
+      const started = await deliver(file, values.replace ? { replace: values.replace } : {});
       if (started.token) auth['x-edit-token'] = started.token;
       entry = await call(`${files}/parts/${started.id}/finish?${query}`);
       rmSync(`${file}.upload.json`, { force: true });

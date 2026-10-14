@@ -3,10 +3,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detailMasks, Encoder, GlyphcastError } from './format.js';
-import { deflateRaw } from 'node:zlib';
+import { constants, zstdCompress } from 'node:zlib';
 import { promisify } from 'node:util';
 
-const deflate9 = (data: Uint8Array): Promise<Uint8Array> => promisify(deflateRaw)(data, { level: 9, memLevel: 9 });
+// format version 5: zstd at level 19, about 10-16% smaller than deflate; players read it with a 10 KB decoder
+const zstd19 = (data: Uint8Array): Promise<Uint8Array> => promisify(zstdCompress)(data, { params: { [constants.ZSTD_c_compressionLevel]: 19 } });
 
 export interface EncodeVideoOptions {
   /** Grid width in glyphs. Default 160. */
@@ -123,7 +124,7 @@ export const encodeVideo = async (input: string, options: EncodeVideoOptions = {
   const cropped = area.width !== probed.width || area.height !== probed.height ? `crop=${area.width}:${area.height}:${area.x}:${area.y},` : '';
   const rows = Math.max(1, Math.round(cols * (height / width) * (options.glyphAspect ?? 0.6)));
   let frames = 0;
-  const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), detail: options.detail ?? false, shades: options.shades ?? false, compress: deflate9, ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
+  const encoder = new Encoder({ cols, rows, fps, chunkFrames: Math.max(1, Math.round(fps * (options.chunkSeconds ?? 2))), detail: options.detail ?? false, shades: options.shades ?? false, zstd: true, compress: zstd19, ...(options.threshold === undefined ? {} : { threshold: options.threshold }) });
   if (options.subtitles !== false) {
     const text = await run(options.ffmpeg ?? 'ffmpeg', ['-v', 'error', ...piece(input, options), '-map', '0:s:0', '-f', 'webvtt', 'pipe:1']).catch(() => '');
     if (text.includes('-->')) encoder.addSubtitles(text);

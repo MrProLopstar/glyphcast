@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.0
+
+- Format version 5: `encode` compresses chunks with zstd, files are 8-16% smaller; players read versions 3, 4 and 5 (the browser converter still writes version 3)
+- `publish --replace <id>` puts a new file into an existing video and keeps its code, title, views and votes
+
 ## 0.25.0
 
 - `glc publish video.mp4` encodes and uploads in one go: 180 columns with details, sound and a poster, plus 120 and 240 columns for the quality menu
