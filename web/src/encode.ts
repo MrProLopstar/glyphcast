@@ -109,7 +109,7 @@ export const convert = async (file: File, options: ConvertOptions, progress: (sh
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) throw new Error('холст недоступен');
   const worker = new Worker(new URL('./encode.worker.ts', import.meta.url), { type: 'module' });
-  worker.postMessage({ type: 'start', options: { cols, rows, fps, chunkFrames: Math.round(fps * 2), detail } });
+  worker.postMessage({ type: 'start', options: { cols, rows, fps, chunkFrames: Math.round(fps * 2), detail, fast: true } });
   const encoded = new Promise<Uint8Array>((resolve, reject) => {
     worker.addEventListener('message', ({ data }) => (data.error ? reject(new Error(data.error)) : resolve(data.bytes)));
     worker.addEventListener('error', () => reject(new Error('кодировщик не запустился')));
