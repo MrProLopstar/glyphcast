@@ -1,15 +1,23 @@
 import { decompress } from 'fzstd';
+import { decodeChunk6, Encoder6, toPixels, toPlanes } from './codec6.js';
 export const MAGIC = 0x54534347;
 export const VERSION = 3;
 /** Detail streams with a second (dark side) color per patterned cell, written with `shades: true`, use version 4. */
 export const DETAIL_VERSION = 4;
 /** Chunks compressed with zstd instead of deflate (about 10-16% smaller); dark-side colors are bit 6 of byte 5. */
 export const ZSTD_VERSION = 5;
+/**
+ * The current format: frames coded with an adaptive range coder (see codec6.ts) instead of a general-purpose
+ * compressor, motion in dots, dot-level mask contexts. Encoders write only this version; players read 3 to 6.
+ */
+export const CODEC_VERSION = 6;
 export const HEADER_SIZE = 20;
 const CHUNK_HEAD = 6;
 const INDEX_FRAMES = 0xffff;
 const SUBTITLE_FRAMES = 0xfffe;
 const INDEX_MAGIC = 0x58444947;
+/** Chunk frame counts from here up to the subtitle mark are reserved for extensions: readers skip such chunks. */
+const RESERVED_FRAMES = 0xfff0;
 /** Bytes at the end of a file that point to its chunk index. */
 export const INDEX_TRAILER = 8;
 
@@ -36,17 +44,19 @@ export interface StreamInfo {
   readonly shades?: boolean;
   /** Version 5: chunks are compressed with zstd. */
   readonly zstd?: boolean;
+  /** Format version from the header; streams written by this library are always `CODEC_VERSION`. */
+  readonly version?: number;
 }
 
-export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshold'> {
+export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshold' | 'zstd' | 'version'> {
   /** Brightness steps (of 63) a cell may drift before it is sent again. Higher means smaller streams. Default 3. */
   readonly threshold?: number;
   /** Total frames if known in advance, written to the header. Default 0 (unknown). */
   readonly frameCount?: number;
-  /** With `detail`: also store the dark side color of patterned cells (format version 4, about 20–35% larger). */
+  /** With `detail`: also store the dark side color of patterned cells where players would guess it wrong. */
   readonly shades?: boolean;
-  /** Raw deflate for chunks; Node passes zlib at level 9, which is a few percent smaller. Default CompressionStream. */
-  readonly compress?: (data: Uint8Array) => Promise<Uint8Array>;
+  /** Search motion only around the neighbors' vectors: several times faster, a few percent larger. For live streams. */
+  readonly fast?: boolean;
 }
 
 export interface Chunk {
@@ -98,50 +108,6 @@ const planes = (shape: Layout, gray = false): Planes => ({
 
 const clampTo = (value: number, max: number): number => (value < 0 ? 0 : value >= max ? max - 1 : value);
 
-const toPlanes = (pixels: Uint8Array | Uint8ClampedArray, stride: number, shape: Layout): Planes => {
-  const out = planes(shape);
-  const u = new Float32Array(out.u.length);
-  const v = new Float32Array(out.v.length);
-  const weight = new Uint8Array(out.u.length);
-  for (let row = 0; row < shape.rows; row += 1) {
-    for (let col = 0; col < shape.cols; col += 1) {
-      const cell = row * shape.cols + col;
-      const r = pixels[cell * stride] ?? 0;
-      const g = pixels[cell * stride + 1] ?? 0;
-      const b = pixels[cell * stride + 2] ?? 0;
-      out.y[cell] = Math.round(((0.299 * r + 0.587 * g + 0.114 * b) * 63) / 255);
-      const half = (row >> 1) * shape.halfCols + (col >> 1);
-      u[half] = (u[half] ?? 0) + (-0.168736 * r - 0.331264 * g + 0.5 * b);
-      v[half] = (v[half] ?? 0) + (0.5 * r - 0.418688 * g - 0.081312 * b);
-      weight[half] = (weight[half] ?? 0) + 1;
-    }
-  }
-  for (let half = 0; half < out.u.length; half += 1) {
-    const count = weight[half] || 1;
-    out.u[half] = Math.min(31, Math.max(0, Math.round((u[half] ?? 0) / count / 8.2) + 16));
-    out.v[half] = Math.min(31, Math.max(0, Math.round((v[half] ?? 0) / count / 8.2) + 16));
-  }
-  return out;
-};
-
-const toPixels = (frame: Planes, shape: Layout): Uint8ClampedArray => {
-  const out = new Uint8ClampedArray(shape.cols * shape.rows * 4);
-  for (let row = 0; row < shape.rows; row += 1) {
-    for (let col = 0; col < shape.cols; col += 1) {
-      const cell = row * shape.cols + col;
-      const half = (row >> 1) * shape.halfCols + (col >> 1);
-      const y = ((frame.y[cell] ?? 0) * 255) / 63;
-      const u = ((frame.u[half] ?? 0) - 16) * 8.2;
-      const v = ((frame.v[half] ?? 0) - 16) * 8.2;
-      out[cell * 4] = y + 1.402 * v;
-      out[cell * 4 + 1] = y - 0.344136 * u - 0.714136 * v;
-      out[cell * 4 + 2] = y + 1.772 * u;
-      out[cell * 4 + 3] = 255;
-    }
-  }
-  return out;
-};
-
 type Plane = 'y' | 'u' | 'v';
 
 interface Steps {
@@ -155,34 +121,6 @@ const steps = (threshold: number): Steps => {
 };
 
 const rebuild = (base: number, level: number, step: number, plane: Plane): number => Math.min(plane === 'y' ? 63 : 31, Math.max(0, base + level * step));
-
-const scan = (target: Uint8Array, source: Uint8Array, width: number, height: number, x0: number, y0: number, x1: number, y1: number, dx: number, dy: number, tolerance: number, state: { cost: number; fits: boolean }, limit: number): boolean => {
-  for (let row = y0; row < y1; row += 1) {
-    const from = clampTo(row + dy, height) * width;
-    const to = row * width;
-    for (let col = x0; col < x1; col += 1) {
-      const delta = Math.abs((target[to + col] ?? 0) - (source[from + clampTo(col + dx, width)] ?? 0));
-      state.cost += delta;
-      if (delta > tolerance) state.fits = false;
-    }
-    if (!state.fits && state.cost >= limit) return false;
-  }
-  return true;
-};
-
-const match = (shape: Layout, current: Planes, reference: Planes, block: number, dx: number, dy: number, tolerance: Readonly<Record<Plane, number>>, limit: number): number => {
-  const bx = (block % shape.blocksX) * BLOCK_W;
-  const by = Math.floor(block / shape.blocksX) * BLOCK_H;
-  const state = { cost: 0, fits: true };
-  const x1 = Math.min(bx + BLOCK_W, shape.cols);
-  const y1 = Math.min(by + BLOCK_H, shape.rows);
-  if (!scan(current.y, reference.y, shape.cols, shape.rows, bx, by, x1, y1, dx, dy, tolerance.y, state, limit)) return Infinity;
-  const hx1 = Math.min((bx + BLOCK_W) >> 1, shape.halfCols);
-  const hy1 = Math.min((by + BLOCK_H) >> 1, shape.halfRows);
-  if (!scan(current.u, reference.u, shape.halfCols, shape.halfRows, bx >> 1, by >> 1, hx1, hy1, dx >> 1, dy >> 1, tolerance.u, state, limit)) return Infinity;
-  if (!scan(current.v, reference.v, shape.halfCols, shape.halfRows, bx >> 1, by >> 1, hx1, hy1, dx >> 1, dy >> 1, tolerance.v, state, limit)) return Infinity;
-  return state.fits ? -1 : state.cost;
-};
 
 const visit = (shape: Layout, block: number, each: (plane: 'y' | 'u' | 'v', index: number, reference: (dx: number, dy: number) => number) => void): void => {
   const bx = (block % shape.blocksX) * BLOCK_W;
@@ -206,7 +144,6 @@ const pipe = async (data: Uint8Array, stream: CompressionStream | DecompressionS
   return new Uint8Array(await new Response(output).arrayBuffer());
 };
 
-export const deflate = (data: Uint8Array): Promise<Uint8Array> => pipe(data, new CompressionStream('deflate-raw'));
 export const inflate = (data: Uint8Array): Promise<Uint8Array> => pipe(data, new DecompressionStream('deflate-raw'));
 
 const validate = ({ cols, rows, fps, chunkFrames, threshold }: Omit<StreamInfo, 'frameCount'>): void => {
@@ -223,9 +160,8 @@ export const writeHeader = (info: StreamInfo): Uint8Array => {
   const out = new Uint8Array(HEADER_SIZE);
   const view = new DataView(out.buffer);
   view.setUint32(0, MAGIC, true);
-  const shades = Boolean(info.detail && info.shades);
-  view.setUint8(4, info.zstd ? ZSTD_VERSION : shades ? DETAIL_VERSION : VERSION);
-  view.setUint8(5, info.threshold | (info.detail ? 128 : 0) | (info.zstd && shades ? 64 : 0));
+  view.setUint8(4, CODEC_VERSION);
+  view.setUint8(5, info.threshold | (info.detail ? 128 : 0) | (info.detail && info.shades ? 64 : 0));
   view.setUint16(6, info.cols, true);
   view.setUint16(8, info.rows, true);
   view.setFloat32(10, info.fps, true);
@@ -240,7 +176,7 @@ export const readHeader = (bytes: Uint8Array): StreamInfo => {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (view.getUint32(0, true) !== MAGIC) throw new GlyphcastError('Not a .gcast stream');
   const version = view.getUint8(4);
-  if (version !== VERSION && version !== DETAIL_VERSION && version !== ZSTD_VERSION) throw new GlyphcastError(`Unsupported .gcast version ${version}; update glyphcast`);
+  if (version < VERSION || version > CODEC_VERSION) throw new GlyphcastError(`Unsupported .gcast version ${version}; update glyphcast`);
   const flags = view.getUint8(5);
   const info = {
     cols: view.getUint16(6, true),
@@ -248,10 +184,11 @@ export const readHeader = (bytes: Uint8Array): StreamInfo => {
     fps: view.getFloat32(10, true),
     chunkFrames: view.getUint16(14, true),
     frameCount: view.getUint32(16, true),
-    threshold: flags & (version === ZSTD_VERSION ? 63 : 127),
+    threshold: flags & (version >= ZSTD_VERSION ? 63 : 127),
     detail: (flags & 128) !== 0,
-    shades: (flags & 128) !== 0 && (version === DETAIL_VERSION || (version === ZSTD_VERSION && (flags & 64) !== 0)),
+    shades: (flags & 128) !== 0 && (version === DETAIL_VERSION || (version >= ZSTD_VERSION && (flags & 64) !== 0)),
     zstd: version === ZSTD_VERSION,
+    version,
   };
   validate(info);
   return info;
@@ -303,7 +240,7 @@ export class StreamReader {
       const size = view.getUint32(0, true);
       const frames = view.getUint16(4, true);
       if (this.length - at - CHUNK_HEAD < size) break;
-      if (frames === INDEX_FRAMES) {
+      if (frames === INDEX_FRAMES || (frames >= RESERVED_FRAMES && frames < SUBTITLE_FRAMES)) {
         at += CHUNK_HEAD + size;
         continue;
       }
@@ -324,9 +261,9 @@ export class StreamReader {
 
 /**
  * Builds a `.gcast` stream frame by frame. Frames are RGB24 or RGBA pixels at the grid size. Cells are stored as
- * 6-bit brightness with color shared by 2×2 cells (like 4:2:0 video); the grid is cut into 8×4 blocks, and each
- * block either repeats the previous frame shifted by a motion vector or carries a residual against it. Every
- * `chunkFrames` frames form a compressed chunk that starts with a key frame, so playback can begin at any chunk.
+ * 6-bit brightness with color shared by 2×2 cells (like 4:2:0 video), coded as described in codec6.ts. Every
+ * `chunkFrames` frames (fewer at a scene cut) form a chunk that starts with a key frame, so playback can begin at
+ * any chunk.
  *
  * `onChunk` receives each finished chunk, ready for a file or an HTTP response; `finish()` also returns a whole file.
  */
@@ -346,27 +283,18 @@ const sceneCut = (now: ArrayLike<number>, before: ArrayLike<number>): boolean =>
 
 export class Encoder {
   readonly info: StreamInfo;
-  private readonly shape: Layout;
-  private readonly steps: Steps;
-  private state: Planes;
-  private parts: Uint8Array[] = [];
+  private readonly coder: Encoder6;
+  private previous: Uint8Array | null = null;
   private inChunk = 0;
   private frames = 0;
-  private chunkStart = 0;
-  private queue: Promise<void> = Promise.resolve();
   private readonly finished: Uint8Array[] = [];
   private readonly lateAudio: Uint8Array[] = [];
   private subtitles: Uint8Array | null = null;
-  private masks: Uint8Array = new Uint8Array(0);
-  private readonly compress: EncodeOptions['compress'];
 
   constructor(options: EncodeOptions, private readonly onChunk?: (bytes: Uint8Array) => void) {
-    this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0, threshold: options.threshold ?? 3, detail: options.detail ?? false, shades: Boolean(options.detail && options.shades), zstd: options.zstd ?? false };
-    this.compress = options.compress;
+    this.info = { cols: options.cols, rows: options.rows, fps: options.fps, chunkFrames: options.chunkFrames, frameCount: options.frameCount ?? 0, threshold: options.threshold ?? 3, detail: options.detail ?? false, shades: Boolean(options.detail && options.shades), version: CODEC_VERSION };
     validate(this.info);
-    this.shape = layout(options.cols, options.rows);
-    this.steps = steps(this.info.threshold);
-    this.state = planes(this.shape);
+    this.coder = new Encoder6({ cols: options.cols, rows: options.rows, threshold: this.info.threshold, detail: this.info.detail ?? false, shades: this.info.shades ?? false, fast: options.fast ?? false });
     this.emit(writeHeader(this.info));
   }
 
@@ -389,130 +317,21 @@ export class Encoder {
 
   /**
    * Adds a frame of `cols × rows` pixels, 3 or 4 bytes per pixel. Streams with `detail` also take one byte per cell:
-   * bit `y * 2 + x` is set where the cell's 2×4 sub-pixel is brighter than the cell, see `detailMasks`.
+   * bit `y * 2 + x` is set where the cell's 2×4 sub-pixel is brighter than the cell, see `detailMasks`; with
+   * `shades`, also the RGB of each cell's dark dots.
    */
   add(pixels: Uint8Array | Uint8ClampedArray, masks?: Uint8Array, shades?: Uint8Array): void {
-    const shape = this.shape;
+    const shape = layout(this.info.cols, this.info.rows);
     const cells = shape.cols * shape.rows;
     const stride = pixels.length / cells;
     if (stride !== 3 && stride !== 4) throw new GlyphcastError(`A frame must have ${cells * 3} or ${cells * 4} bytes, got ${pixels.length}`);
+    if (this.info.detail && (!masks || masks.length !== cells)) throw new GlyphcastError(`A detail stream needs ${cells} pattern bytes per frame`);
     const current = toPlanes(pixels, stride, shape);
     // a new scene starts a new chunk: its first frame is a key frame instead of a pile of residuals, and seeking
     // lands on scene starts
-    if (this.inChunk >= Math.max(4, this.info.chunkFrames >> 2) && sceneCut(current.y, this.state.y)) this.flush();
-    const key = this.inChunk === 0;
-    const reference = key ? planes(shape, true) : this.state;
-    const next = planes(shape);
-    const modes = new Uint8Array(shape.blocks);
-    const residuals = planes(shape);
-    const counts = { y: 0, u: 0, v: 0 };
-    const tolerance = this.steps.tolerance;
-    for (let block = 0; block < shape.blocks; block += 1) {
-      let chosen = -1;
-      let best = 0;
-      let bestCost = Infinity;
-      for (let vector = 0; vector < (key ? 1 : VECTORS.length); vector += 1) {
-        const [dx, dy] = VECTORS[vector] ?? [0, 0];
-        const cost = match(shape, current, reference, block, dx, dy, tolerance, bestCost);
-        if (cost < 0) {
-          chosen = vector;
-          break;
-        }
-        if (cost < bestCost) {
-          bestCost = cost;
-          best = vector;
-        }
-      }
-      if (chosen < 0) {
-        const low = { y: 255, u: 255, v: 255 };
-        const high = { y: 0, u: 0, v: 0 };
-        const sum = { y: 0, u: 0, v: 0 };
-        const cells = { y: 0, u: 0, v: 0 };
-        visit(shape, block, (plane, index) => {
-          const value = current[plane][index] ?? 0;
-          low[plane] = Math.min(low[plane], value);
-          high[plane] = Math.max(high[plane], value);
-          sum[plane] += value;
-          cells[plane] += 1;
-        });
-        if ((['y', 'u', 'v'] as const).every((plane) => high[plane] - low[plane] <= Math.max(1, tolerance[plane]))) {
-          modes[block] = UNIFORM;
-          const fill = { y: Math.round(sum.y / (cells.y || 1)), u: Math.round(sum.u / (cells.u || 1)), v: Math.round(sum.v / (cells.v || 1)) };
-          for (const plane of ['y', 'u', 'v'] as const) {
-            residuals[plane][counts[plane]] = fill[plane];
-            counts[plane] += 1;
-          }
-          visit(shape, block, (plane, index) => {
-            next[plane][index] = fill[plane];
-          });
-          continue;
-        }
-      }
-      const vector = chosen >= 0 ? chosen : best;
-      const [dx, dy] = VECTORS[vector] ?? [0, 0];
-      modes[block] = chosen >= 0 ? vector : vector | RESIDUAL;
-      visit(shape, block, (plane, index, at) => {
-        const base = reference[plane][at(dx, dy)] ?? 0;
-        if (chosen >= 0) {
-          next[plane][index] = base;
-          return;
-        }
-        const step = key ? 1 : this.steps.size[plane];
-        const level = Math.round(((current[plane][index] ?? 0) - base) / step);
-        residuals[plane][counts[plane]] = level & 255;
-        counts[plane] += 1;
-        next[plane][index] = rebuild(base, level, step, plane);
-      });
-    }
-    this.state = next;
-    this.parts.push(new Uint8Array([key ? 0 : 1]), modes, residuals.y.slice(0, counts.y), residuals.u.slice(0, counts.u), residuals.v.slice(0, counts.v));
-    if (this.info.detail) {
-      if (!masks || masks.length !== cells) throw new GlyphcastError(`A detail stream needs ${cells} pattern bytes per frame`);
-      const reference = key || this.masks.length !== cells ? new Uint8Array(cells) : this.masks;
-      const { flags, explicit, next: patterns } = encodeMasks(shape, modes, reference, masks, key);
-      this.masks = patterns;
-      this.parts.push(flags, explicit);
-      if (this.info.shades) {
-      // dark colors of patterned cells, only where the players' guess from the neighbors (the average of the darker
-      // neighbors) is far off: edges between two strong colors, letters over a colored scene. Elsewhere players guess.
-      const darkFlags = new Uint8Array(Math.ceil(shape.blocks / 8));
-      const darks: number[] = [];
-      const color = (index: number, channel: number): number => pixels[index * stride + channel] ?? 0;
-      const lumaOf = (index: number): number => color(index, 0) * 0.299 + color(index, 1) * 0.587 + color(index, 2) * 0.114;
-      const guessWrong = (index: number): boolean => {
-        const x = index % shape.cols;
-        const y = Math.floor(index / shape.cols);
-        const own = lumaOf(index);
-        const sum = [0, 0, 0];
-        let count = 0;
-        for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]] as const) {
-          if (nx < 0 || ny < 0 || nx >= shape.cols || ny >= shape.rows) continue;
-          const near = ny * shape.cols + nx;
-          if (lumaOf(near) >= own - 10) continue;
-          for (let channel = 0; channel < 3; channel += 1) sum[channel] = (sum[channel] ?? 0) + color(near, channel);
-          count += 1;
-        }
-        for (let channel = 0; channel < 3; channel += 1) {
-          const guess = count ? (sum[channel] ?? 0) / count : color(index, channel) * 0.5;
-          if (Math.abs(guess - (shades?.[index * 3 + channel] ?? 0)) > 40) return true;
-        }
-        return false;
-      };
-      for (let block = 0; block < shape.blocks; block += 1) {
-        let wrong = false;
-        blockCells(shape, block, (index) => {
-          if (!wrong && patterns[index]) wrong = guessWrong(index);
-        });
-        if (!wrong) continue;
-        darkFlags[block >> 3] = (darkFlags[block >> 3] ?? 0) | (1 << (block & 7));
-        blockCells(shape, block, (index) => {
-          if (!patterns[index]) return;
-          for (let channel = 0; channel < 3; channel += 1) darks.push((shades?.[index * 3 + channel] ?? 0) >> 2);
-        });
-      }
-      this.parts.push(darkFlags, Uint8Array.from(darks));
-      }
-    }
+    if (this.previous && this.inChunk >= Math.max(4, this.info.chunkFrames >> 2) && sceneCut(current.y, this.previous)) this.flush();
+    const frame = this.coder.add({ planes: current, ...(masks ? { masks } : {}), ...(this.info.shades && shades ? { shades } : {}) });
+    this.previous = frame.planes.y;
     this.frames += 1;
     this.inChunk += 1;
     if (this.inChunk === this.info.chunkFrames) this.flush();
@@ -528,29 +347,18 @@ export class Encoder {
 
   private flush(): void {
     if (this.inChunk === 0) return;
-    const raw = new Uint8Array(this.parts.reduce((sum, part) => sum + part.length, 0));
-    let at = 0;
-    for (const part of this.parts) {
-      raw.set(part, at);
-      at += part.length;
-    }
-    const chunk = { start: this.chunkStart, frames: this.inChunk };
-    this.chunkStart += this.inChunk;
-    this.parts = [];
+    this.emit(frameChunk({ start: this.frames - this.inChunk, frames: this.inChunk, data: this.coder.finish() }));
     this.inChunk = 0;
-    const compressed = (this.compress ?? deflate)(raw);
-    this.queue = this.queue.then(async () => this.emit(frameChunk({ ...chunk, data: await compressed })));
   }
 
-  /** Waits for every chunk to be emitted. Call it to apply backpressure in long encodes. */
+  /** Kept for callers that waited for compression; chunks are now emitted as soon as they are full. */
   drain(): Promise<void> {
-    return this.queue;
+    return Promise.resolve();
   }
 
   /** Flushes the last chunk and returns the whole stream; the header carries the final frame count. */
   async finish(): Promise<Uint8Array> {
     this.flush();
-    await this.queue;
     const header = writeHeader({ ...this.info, frameCount: this.frames });
     const body = [...(this.subtitles ? [this.subtitles] : []), ...this.lateAudio, ...this.finished.slice(1)];
     const entries: IndexEntry[] = [];
@@ -616,7 +424,7 @@ export const audioType = (bytes: Uint8Array): string => {
 };
 
 /** Decodes one chunk payload into RGBA frames (`cols × rows × 4` bytes each), ready to upload as a texture. */
-export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold' | 'detail'>, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => (await decodeChunkMotion(info, compressed)).frames;
+export const decodeChunk = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold' | 'detail' | 'shades' | 'zstd' | 'version'>, compressed: Uint8Array): Promise<Uint8ClampedArray[]> => (await decodeChunkMotion(info, compressed)).frames;
 
 /** Decoded frames with the motion of every 8×4 block (dx, dy in cells per block), for interpolating between frames. */
 export interface DecodedChunk {
@@ -629,7 +437,21 @@ export interface DecodedChunk {
 }
 
 /** Like `decodeChunk`, and also returns where each block of each frame came from in the previous one. */
-export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold' | 'detail' | 'shades' | 'zstd'>, compressed: Uint8Array): Promise<DecodedChunk> => {
+export const decodeChunkMotion = async (info: Pick<StreamInfo, 'cols' | 'rows' | 'threshold' | 'detail' | 'shades' | 'zstd' | 'version'>, compressed: Uint8Array): Promise<DecodedChunk> => {
+  if ((info.version ?? 0) >= CODEC_VERSION) {
+    const shape = layout(info.cols, info.rows);
+    let decoded;
+    try {
+      decoded = decodeChunk6({ cols: info.cols, rows: info.rows, threshold: info.threshold, detail: info.detail ?? false, shades: Boolean(info.detail && info.shades) }, compressed);
+    } catch (error) {
+      throw new GlyphcastError(error instanceof Error ? error.message : String(error));
+    }
+    const frames = decoded.map((frame) => toPixels(frame.planes, shape));
+    const motion = decoded.map((frame) => frame.motion);
+    if (!info.detail) return { frames, motion };
+    const detail = decoded.map((frame) => frame.masks);
+    return info.shades ? { frames, motion, detail, shades: decoded.map((frame) => frame.shades ?? new Uint8Array(info.cols * info.rows * 3)) } : { frames, motion, detail };
+  }
   const raw = info.zstd ? decompress(compressed) : await inflate(compressed);
   const shape = layout(info.cols, info.rows);
   const { size } = steps(info.threshold);
@@ -737,35 +559,6 @@ const blockCells = (shape: Layout, block: number, each: (index: number, x: numbe
 };
 
 const blockVector = (mode: number): readonly [number, number] => (mode === UNIFORM ? [0, 0] : (VECTORS[mode & ~RESIDUAL] ?? [0, 0]));
-
-const bits = (value: number): number => {
-  let count = 0;
-  for (let rest = value; rest; rest >>= 1) count += rest & 1;
-  return count;
-};
-
-const encodeMasks = (shape: Layout, modes: Uint8Array, reference: Uint8Array, masks: Uint8Array, key: boolean): { flags: Uint8Array; explicit: Uint8Array; next: Uint8Array } => {
-  const flags = new Uint8Array(Math.ceil(shape.blocks / 8));
-  const explicit: number[] = [];
-  const next = new Uint8Array(masks.length);
-  for (let block = 0; block < shape.blocks; block += 1) {
-    const [dx, dy] = blockVector(modes[block] ?? 0);
-    let changed = 0;
-    blockCells(shape, block, (index, x, y) => {
-      const derived = reference[clampTo(y + dy, shape.rows) * shape.cols + clampTo(x + dx, shape.cols)] ?? 0;
-      next[index] = derived;
-      changed += bits(derived ^ (masks[index] ?? 0));
-    });
-    if (key || changed > 12) {
-      flags[block >> 3] = (flags[block >> 3] ?? 0) | (1 << (block & 7));
-      blockCells(shape, block, (index) => {
-        next[index] = masks[index] ?? 0;
-        explicit.push(masks[index] ?? 0);
-      });
-    }
-  }
-  return { flags, explicit: Uint8Array.from(explicit), next };
-};
 
 /**
  * Dot patterns for a detail stream from a frame at twice the width and four times the height of the grid, RGB or

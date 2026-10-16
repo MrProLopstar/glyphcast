@@ -20,9 +20,9 @@ const HELP: Record<string, string> = {
                           --cols 120,180, write <name>-120.gcast and <name>-180.gcast for quality switching
     --fps 24              frames per second
     --detail              stores a 2x4 dot pattern for cells with sharp edges: readable titles and
-                          thin lines in braille, about 15% larger
+                          thin lines in braille, about 50% larger
     --shades              with --detail: also keep the color of the dark side of those cells, exact edges
-                          between two strong colors; format version 4, 20-35% larger, needs glyphcast 0.25+
+                          between two strong colors; 50-130% larger
     --threshold 3         how much a cell may change before it is sent again; higher is smaller and blockier
     --no-crop             keep black bars (by default bars that stay black the whole video are cut)
 

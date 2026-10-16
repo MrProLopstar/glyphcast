@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0
+
+The format is final: [FORMAT.md](FORMAT.md) describes version 6 completely, and every later glyphcast plays it.
+
+- Format version 6, written by `encode`, the browser converter, `serve` and the hub's live broadcasts. 32–39% smaller than version 5 on films, cartoons and screen recordings, and closer to the source:
+  - an adaptive range coder with contexts replaces deflate and zstd: no general-purpose compressor, a small decoder;
+  - motion vectors accurate to one dot (half a cell across, a quarter down), predicted from the dots of the previous frame, so slow pans and scrolling cost little;
+  - blocks the motion does not explain are predicted from their neighbors (the LOCO-I median) and kept exact, as are key frames;
+  - dot patterns are coded dot by dot against their neighbors and the moved previous frame;
+  - every frame names its quantizers, so a future encoder can do rate control without a new format;
+  - chunk kinds `0xfff0`–`0xfffd` are reserved for extensions and skipped by players.
+- Files of versions 3, 4 and 5 keep playing exactly as before (tested against files made by 0.26).
+- `Encoder` option `fast`: motion searched only around the neighbors' vectors, several times faster; `serve` uses it for live streams.
+- `Encoder` no longer takes `compress` and `zstd`; `drain()` resolves at once, chunks are emitted as soon as they are full.
+
 ## 0.26.0
 
 - Format version 5: `encode` compresses chunks with zstd, files are 8-16% smaller; players read versions 3, 4 and 5 (the browser converter still writes version 3)

@@ -5,3 +5,4 @@ site/lib
 *.gcast
 !site/*.gcast
 site/test-*.mp4
+!test/fixtures/*.gcast

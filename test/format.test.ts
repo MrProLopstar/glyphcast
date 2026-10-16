@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { audioType, decodeChunk, decodeChunkMotion, detailMasks, Encoder, GlyphcastError, INDEX_TRAILER, indexLength, interpolate, readHeader, readIndex, StreamReader, type Chunk } from '../src/format.js';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { audioType, CODEC_VERSION, decodeChunk, decodeChunkMotion, detailMasks, Encoder, frameChunk, GlyphcastError, INDEX_TRAILER, indexLength, interpolate, readHeader, readIndex, StreamReader, type Chunk } from '../src/format.js';
 import { captionAt, parseCaptions } from '../src/captions.js';
 import { upscale2x } from '../src/upscale.js';
 import { autoLevels, glyphIndex, luma, NEUTRAL } from '../src/levels.js';
@@ -288,4 +290,112 @@ it('stores the dark side of patterned cells in version 4 detail streams', async 
     expect(frame[1]).toBeLessThan(4);
   }
   expect(decoded.shades).toHaveLength(2);
+});
+
+describe('format version 6', () => {
+  const dots = (shift: number): Uint8Array => {
+    // bright diagonal stripes on a dark gradient, moved `shift` dots to the right
+    const pixels = new Uint8Array(cols * 2 * rows * 4 * 3);
+    for (let y = 0; y < rows * 4; y += 1) {
+      for (let x = 0; x < cols * 2; x += 1) {
+        const at = (y * cols * 2 + x) * 3;
+        const on = (x - shift + y) % 7 < 2;
+        pixels[at] = on ? 240 : 20 + y * 3;
+        pixels[at + 1] = on ? 220 : 40;
+        pixels[at + 2] = on ? 90 : 60 + x;
+      }
+    }
+    return pixels;
+  };
+  const encodeDots = async (shifts: number[], extra: { shades?: boolean } = {}): Promise<Uint8Array> => {
+    const encoder = new Encoder({ cols, rows, fps: 10, chunkFrames: 50, detail: true, ...extra });
+    let bar: number | undefined;
+    for (const shift of shifts) {
+      const found = detailMasks(dots(shift), cols, rows, 3, bar);
+      bar = found.bar;
+      encoder.add(found.cells, found.masks, found.shades);
+    }
+    return encoder.finish();
+  };
+
+  it('writes version 6 and decodes exactly what the encoder reconstructed', async () => {
+    const bytes = await encodeDots([0, 1, 2, 3, 4, 5], { shades: true });
+    expect(bytes[4]).toBe(CODEC_VERSION);
+    const header = readHeader(bytes);
+    expect(header).toMatchObject({ version: 6, detail: true, shades: true, threshold: 3 });
+    const [chunk] = split(bytes);
+    const first = await decodeChunkMotion(header, chunk?.data ?? new Uint8Array());
+    const again = await decodeChunkMotion(header, chunk?.data ?? new Uint8Array());
+    expect(first.frames).toHaveLength(6);
+    expect(again).toEqual(first);
+    // the key frame is exact: its masks are the source's
+    expect(first.detail?.[0]).toEqual(detailMasks(dots(0), cols, rows, 3).masks);
+  });
+
+  it('follows motion of a single dot, so slow movement costs little', async () => {
+    // squares of random colors, four dots wide, moved by whole dots
+    const textured = (shiftX: number, shiftY: number, seed = 1): Uint8Array => {
+      const pixels = new Uint8Array(cols * 2 * rows * 4 * 3);
+      for (let y = 0; y < rows * 4; y += 1) {
+        for (let x = 0; x < cols * 2; x += 1) {
+          const hash = Math.imul((((x - shiftX + 1000) >> 2) * 73856093) ^ (((y - shiftY + 1000) >> 2) * 19349663) ^ seed, 2654435761) >>> 0;
+          pixels.set([hash & 255, (hash >> 8) & 255, (hash >> 16) & 255], (y * cols * 2 + x) * 3);
+        }
+      }
+      return pixels;
+    };
+    const size = async (pictures: Uint8Array[]): Promise<number> => {
+      const encoder = new Encoder({ cols, rows, fps: 10, chunkFrames: 50, detail: true });
+      let bar: number | undefined;
+      for (const pixels of pictures) {
+        const found = detailMasks(pixels, cols, rows, 3, bar);
+        bar = found.bar;
+        encoder.add(found.cells, found.masks);
+      }
+      return (await encoder.finish()).length;
+    };
+    const frames = Array.from({ length: 20 }, (_, index) => index);
+    const moving = await size(frames.map((index) => textured(index, 0)));
+    const fresh = await size(frames.map((index) => textured(0, 0, index + 5)));
+    expect(moving).toBeLessThan(fresh * 0.5);
+  });
+
+  it('skips chunks of the reserved kinds, so later versions can add their own', async () => {
+    const bytes = await encodeDots([0, 1, 2]);
+    const extra = frameChunk({ start: 0, frames: 0xfff3, data: new Uint8Array([1, 2, 3]) });
+    const mixed = new Uint8Array([...bytes.subarray(0, 20), ...extra, ...bytes.subarray(20)]);
+    expect(split(mixed).map((chunk) => chunk.frames)).toEqual(split(bytes).map((chunk) => chunk.frames));
+  });
+
+  it('reports damaged chunks as GlyphcastError instead of hanging or crashing', async () => {
+    const bytes = await encodeDots([0, 1, 2, 3]);
+    const header = readHeader(bytes);
+    const [chunk] = split(bytes);
+    const data = chunk?.data ?? new Uint8Array();
+    await expect(decodeChunkMotion(header, data.subarray(0, 1))).rejects.toThrow(GlyphcastError);
+    await expect(decodeChunkMotion(header, new Uint8Array([0xff, 0xff, 0xff, 0xff, 0x7f]))).rejects.toThrow(GlyphcastError);
+  });
+
+  it('still plays files of versions 3 to 5 exactly as glyphcast 0.26 did', async () => {
+    const expected: Record<string, string> = {
+      v3: '0c4feb23f5f670e2b5362038baa2c8d2b82bc141cb35003e1eee3f82322f7638',
+      v4: '61e2a0eb9e21a31dd04bd9e618e508e09cb21bc9d321c19c3c81bb6f27818a17',
+      v5: '0c4feb23f5f670e2b5362038baa2c8d2b82bc141cb35003e1eee3f82322f7638',
+    };
+    for (const [name, digest] of Object.entries(expected)) {
+      const bytes = new Uint8Array(readFileSync(new URL(`./fixtures/${name}.gcast`, import.meta.url)));
+      const header = readHeader(bytes);
+      const hash = createHash('sha256');
+      for (const chunk of split(bytes)) {
+        if (!chunk.frames) continue;
+        const decoded = await decodeChunkMotion(header, chunk.data);
+        decoded.frames.forEach((frame, index) => {
+          hash.update(frame);
+          hash.update(decoded.detail?.[index] ?? new Uint8Array());
+          if (decoded.shades) hash.update(decoded.shades[index] ?? new Uint8Array());
+        });
+      }
+      expect(hash.digest('hex'), name).toBe(digest);
+    }
+  });
 });

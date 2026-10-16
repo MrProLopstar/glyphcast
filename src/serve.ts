@@ -118,7 +118,7 @@ export const serve = (options: ServeOptions = {}): Promise<Server> => {
     const gridRows = width && height ? Math.max(1, Math.round(cols * (height / width) * 0.6)) : rows;
     response.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'x-glyphcast-duration': String(source.info.duration) });
     const child = spawn(ffmpeg, ['-v', 'error', '-ss', String(start), '-i', source.video, '-an', '-vf', `fps=${fps},scale=${cols}:${gridRows}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'], { stdio: ['ignore', 'pipe', 'ignore'] });
-    const encoder = new Encoder({ cols, rows: gridRows, fps, chunkFrames: Math.max(1, Math.round(fps)), threshold, frameCount: source.info.duration ? Math.max(0, Math.round((source.info.duration - start) * fps)) : 0 }, (bytes) => {
+    const encoder = new Encoder({ cols, rows: gridRows, fps, chunkFrames: Math.max(1, Math.round(fps)), threshold, fast: true, frameCount: source.info.duration ? Math.max(0, Math.round((source.info.duration - start) * fps)) : 0 }, (bytes) => {
       if (!response.destroyed && !response.write(bytes)) child.stdout.pause();
     });
     response.on('drain', () => child.stdout.resume());

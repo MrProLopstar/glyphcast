@@ -30,7 +30,7 @@ glc help encode                                  # every option with examples
 <glyph-player youtube="https://youtu.be/…" server="http://127.0.0.1:8787"></glyph-player>
 ```
 
-No bundler? `import 'https://cdn.jsdelivr.net/npm/glyphcast@0/dist/element.js/+esm'`.
+No bundler? `import 'https://cdn.jsdelivr.net/npm/glyphcast@1/dist/element.js/+esm'`.
 
 ## The player
 
@@ -83,11 +83,11 @@ Without UI, `GlyphPlayer` is the same engine with the media element API: `load`,
 
 ## Glyphs instead of video
 
-At 160 columns a frame is about nine thousand colored cells, far less than a video frame. `.gcast` stores 6-bit brightness per cell and one color per 2×2 cells, like 4:2:0 video. The grid is cut into 8×4 blocks: a block either repeats the previous frame shifted by a motion vector or carries a residual against it, quantized to the threshold. One- or two-second chunks are deflated and start with an exact key frame. Sound can be embedded in the `.gcast` itself: it comes before the frames, and the player extracts it and keeps time by it. The playground has a converter that makes a `.gcast` from your video right in the browser (encoding runs in a Web Worker), shows how much smaller it got and the matching console command. Convert whole films in the console: a browser cannot hold their sound in memory. A chunk index sits at the end of the file: the player reads it with a range request and, when seeking, fetches the right place at once instead of waiting for the whole file. The format streams: chunks are length-prefixed, so a player starts with the first one, and a server can produce them live.
+At 160 columns a frame is about nine thousand colored cells, far less than a video frame. `.gcast` stores 6-bit brightness per cell, one color per 2×2 cells (like 4:2:0 video) and, with `--detail`, the 2×4 dot pattern of cells with sharp edges. The grid is cut into 8×4 blocks: a block is predicted from the previous frame moved by a vector accurate to one dot, or from its neighbors in the same frame, and only what the prediction misses is sent. Everything goes through an adaptive range coder with contexts (dot patterns are coded dot by dot against their neighbors, like JBIG2), so the format needs no general-purpose compressor and the decoder is small. Chunks of about two seconds start with an exact key frame; new scenes start new chunks. [FORMAT.md](FORMAT.md) describes the format completely; it is frozen since 1.0, every later version plays it. Sound can be embedded in the `.gcast` itself: it comes before the frames, and the player extracts it and keeps time by it. The playground has a converter that makes a `.gcast` from your video right in the browser (encoding runs in a Web Worker), shows how much smaller it got and the matching console command. Convert whole films in the console: a browser cannot hold their sound in memory. A chunk index sits at the end of the file: the player reads it with a range request and, when seeking, fetches the right place at once instead of waiting for the whole file. The format streams: chunks are length-prefixed, so a player starts with the first one, and a server can produce them live.
 
 ```sh
 npx glyphcast encode movie.mp4 --cols 180 --embed --poster    # one file with Opus sound inside, plus movie.jpg
-npx glyphcast encode movie.mp4 --detail                       # 2×4 dot pattern from the source: sharp text in braille, 20–40% larger
+npx glyphcast encode movie.mp4 --detail                       # 2×4 dot pattern from the source: sharp text in braille, about 50% larger
 npx glyphcast encode *.mp4 --embed                            # several videos in a row, with progress and time left
 npx glyphcast encode movie.mp4 --cols 180 --audio movie.m4a   # sound as a separate file
 npx glyphcast hub                                               # videos in the gcast hub, watch: npx glyphcast play hub:name
@@ -98,18 +98,18 @@ npx glyphcast micro movie.mp4 --cols 180                        # tiny H.264 at 
 
 `glyphcast serve` turns YouTube links (with yt-dlp) and videos from `--dir` into live `.gcast` streams with a separate Opus audio stream, seeks by restarting at the requested second, and serves ready files with range requests. It listens on `127.0.0.1` only. Browsers cannot read YouTube frames themselves, so this is what makes YouTube work. `glyphcast play` accepts such a stream URL as well, so YouTube plays right in the terminal.
 
-One minute of a film, picture only:
+One minute of a film, picture only, 24 fps:
 
 | What is sent | Size | Bitrate |
 |---|---|---|
-| Source, 1280×544 H.264 (heavily compressed) | 4.9 MB | 650 kbit/s |
-| `.gcast` v2 (0.2), 180 columns, 30 fps | 2.07 MB | 276 kbit/s |
-| `.gcast` v3, 180 columns, 24 fps | 1.15 MB | 153 kbit/s |
-| `.gcast` v3, 180 columns, 15 fps | 0.90 MB | 120 kbit/s |
-| `.gcast` v3, 120 columns, 24 fps | 0.57 MB | 78 kbit/s |
-| Micro video, 180 columns H.264 | 0.35 MB | 47 kbit/s |
+| Source, 1280×544 H.264 | 4.20 MB | 587 kbit/s |
+| `.gcast` 0.26 (format 5), 180 columns, `--detail` | 1.55 MB | 217 kbit/s |
+| `.gcast` 1.0 (format 6), 180 columns, `--detail` | 0.98 MB | 137 kbit/s |
+| `.gcast` 1.0, 180 columns | 0.52 MB | 73 kbit/s |
+| `.gcast` 1.0, 120 columns, `--detail` | 0.50 MB | 69 kbit/s |
+| Micro video, 180 columns H.264 | 0.29 MB | 41 kbit/s |
 
-Stream size depends on the grid and motion, not on the source resolution, so heavier sources save more. A micro video is smaller still, because video codecs have transforms and entropy coding that `.gcast` lacks; `.gcast` needs no video decoder, gives identical frames everywhere and can be generated or edited frame by frame. From Node, `glyphcast/node` exports `encodeVideo`, `encodeMicroVideo`, `extractAudio` and `serve`, and `Encoder` builds streams from raw frames of any source.
+Format 6 files are 32–39% smaller than format 5 on films, cartoons and screen recordings, and closer to the source (SSIM of the dot picture up by 0.03–0.07). Stream size depends on the grid and motion, not on the source resolution. A micro video at the grid size is smaller still: video codecs spend decades of tuning on pixels. `.gcast` instead stores what is drawn — cells and their dot patterns — so it needs no video decoder, plays the same in a browser and in a text terminal, keeps thin lines and text as dots, and can be generated or edited frame by frame. From Node, `glyphcast/node` exports `encodeVideo`, `encodeMicroVideo`, `extractAudio` and `serve`, and `Encoder` builds streams from raw frames of any source.
 
 ## Hub
 
