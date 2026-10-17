@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+- Quality menu: "Auto" picks the grid by the player size (and again in fullscreen or after rotation) and steps down after three stalls in a minute
+- On small players the settings cover the player, one scrolling row per setting, with a Done button
+- Seeking and switching quality no longer show "BodyStreamBuffer was aborted"
+
 ## 1.0.0
 
 The format is final: [FORMAT.md](FORMAT.md) describes version 6 completely, and every later glyphcast plays it.

@@ -73,6 +73,7 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .volume:hover input, .volume input:focus { opacity: 1; }
 .menu { position: absolute; z-index: 2; right: 12px; bottom: 64px; min-width: 240px; max-height: calc(100% - 80px); overflow: auto; padding: 8px; border-radius: 12px; background: var(--panel); backdrop-filter: blur(10px); box-shadow: 0 12px 40px rgba(0,0,0,0.5); display: none; }
 .menu.on { display: block; }
+.menu .close { display: none; }
 .menu h4 { margin: 8px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.55); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 6px 6px; }
 .chips button { padding: 5px 10px; border-radius: 999px; background: rgba(255,255,255,0.08); font-size: 13px; }
@@ -99,7 +100,13 @@ svg { width: 22px; height: 22px; fill: currentColor; }
   .row { margin-top: 0; }
   .row button { width: 36px; height: 36px; }
   svg { width: 20px; height: 20px; }
-  .menu { left: 6px; right: 6px; top: 6px; bottom: 50px; min-width: 0; max-height: none; }
+  /* a small player has no room for a floating panel: the menu covers it, one scrolling row per setting */
+  .menu { inset: 0; min-width: 0; max-height: none; border-radius: 0; padding: 4px 0 8px; background: rgba(12,12,14,0.94); overscroll-behavior: contain; }
+  .menu h4 { margin: 6px 12px 3px; font-size: 10px; }
+  .chips { flex-wrap: nowrap; overflow-x: auto; padding: 0 12px 4px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chips button { flex: none; padding: 6px 12px; }
+  .menu .close { display: block; position: sticky; top: 0; z-index: 1; margin: 0 8px 0 auto; padding: 6px 12px; border-radius: 999px; background: var(--accent); color: #111; font-weight: 600; }
 }
 `;
 
@@ -144,6 +151,9 @@ export class GlyphPlayerElement extends HTMLElement {
   private loading = 0;
   private previewTicket = 0;
   private quality = 0;
+  /** The grid follows the player's size and drops a step when playback keeps waiting for data. */
+  private autoQuality = true;
+  private stalls: number[] = [];
 
   constructor() {
     super();
@@ -276,9 +286,7 @@ export class GlyphPlayerElement extends HTMLElement {
     const sources = this.sources();
     this.badge(null);
     if (sources.length > 0) {
-      const target = (this.frame.clientWidth || 800) * devicePixelRatio / 8;
-      const fitting = sources.filter((source) => source.cols <= target);
-      this.quality = (fitting.at(-1) ?? sources[0])?.cols ?? 0;
+      this.quality = this.autoQuality || !this.quality ? this.fittingQuality() : this.quality;
       const chosen = sources.find((source) => source.cols === this.quality);
       if (chosen) await this.load(chosen.src);
       return;
@@ -297,7 +305,31 @@ export class GlyphPlayerElement extends HTMLElement {
     }
   }
 
-  private async switchQuality(cols: number): Promise<void> {
+  /** The largest grid whose cells stay at least 8 device pixels wide in this player. */
+  private fittingQuality(): number {
+    const sources = this.sources();
+    const target = ((this.frame.clientWidth || 800) * devicePixelRatio) / 8;
+    return (sources.filter((source) => source.cols <= target).at(-1) ?? sources[0])?.cols ?? 0;
+  }
+
+  /** Auto quality: on a resize (fullscreen, rotation) takes the fitting grid; after three stalls in a minute, a smaller one. */
+  private adaptQuality(stalled: boolean): void {
+    if (!this.autoQuality || this.sources().length < 2 || !this.quality) return;
+    if (stalled) {
+      const now = performance.now();
+      this.stalls = [...this.stalls.filter((at) => now - at < 60000), now];
+      if (this.stalls.length < 3) return;
+      this.stalls = [];
+      const smaller = this.sources().filter((source) => source.cols < this.quality).at(-1);
+      if (smaller) void this.switchQuality(smaller.cols, true);
+      return;
+    }
+    const fitting = this.fittingQuality();
+    if (fitting !== this.quality && this.stalls.length === 0) void this.switchQuality(fitting, true);
+  }
+
+  private async switchQuality(cols: number, auto = false): Promise<void> {
+    this.autoQuality = auto;
     const source = this.sources().find((item) => item.cols === cols);
     if (!source || cols === this.quality) return;
     const time = this.player.currentTime;
@@ -425,6 +457,7 @@ export class GlyphPlayerElement extends HTMLElement {
 
   private fit(): void {
     if (this.frame.clientHeight > 0) this.player.fit(this.frame.clientHeight * devicePixelRatio);
+    this.adaptQuality(false);
   }
 
   togglePlay(): void {
@@ -501,7 +534,10 @@ export class GlyphPlayerElement extends HTMLElement {
     });
 
     for (const type of ['play', 'pause', 'timeupdate', 'durationchange', 'progress', 'volumechange', 'ratechange', 'ended', 'loadedmetadata']) player.addEventListener(type, () => this.update());
-    player.addEventListener('waiting', () => this.frame.classList.add('waiting'));
+    player.addEventListener('waiting', () => {
+      this.frame.classList.add('waiting');
+      if (!player.paused && player.currentTime > 0.5) this.adaptQuality(true);
+    });
     player.addEventListener('playing', () => this.frame.classList.remove('waiting'));
     player.addEventListener('play', () => this.poster(false));
     player.addEventListener('play', () => {
@@ -634,7 +670,16 @@ export class GlyphPlayerElement extends HTMLElement {
       chips('Скорость', SPEEDS.map((speed) => [`${speed}×`, speed] as const), player.playbackRate, (value) => (player.playbackRate = Number(value))),
     ];
     const qualities = this.sources();
-    if (qualities.length > 1) parts.push(chips('Качество', qualities.map((source) => [`${source.cols} кол.`, source.cols] as const), this.quality, (value) => void this.switchQuality(Number(value))));
+    if (qualities.length > 1) {
+      const pick = (value: unknown): void => {
+        if (Number(value)) void this.switchQuality(Number(value));
+        else {
+          this.autoQuality = true;
+          this.adaptQuality(false);
+        }
+      };
+      parts.push(chips('Качество', [[`Авто (${this.quality})`, 0] as const, ...qualities.map((source) => [`${source.cols} кол.`, source.cols] as const)], this.autoQuality ? 0 : this.quality, pick));
+    }
     if (player.sourceType === 'video') {
       parts.push(chips('Сетка', GRIDS.map((cols) => [String(cols), cols] as const), look.cols, (value) => {
         player.configure({ cols: Number(value) });
@@ -671,7 +716,12 @@ export class GlyphPlayerElement extends HTMLElement {
       });
       return button;
     };
+    const close = document.createElement('button');
+    close.className = 'close';
+    close.textContent = 'Готово';
+    close.addEventListener('click', () => menu.classList.remove('on'));
     menu.replaceChildren(
+      close,
       ...parts,
       boost,
       fill,

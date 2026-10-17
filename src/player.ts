@@ -159,6 +159,8 @@ export class GlyphPlayer extends EventTarget {
   }
 
   private fail(error: Error): void {
+    // a download cut short on purpose (seeking, switching quality, unloading) is not an error
+    if (error.name === 'AbortError') return;
     this.emit('error', error);
   }
 
