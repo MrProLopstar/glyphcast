@@ -288,7 +288,7 @@ export class GlyphPlayerElement extends HTMLElement {
     if (sources.length > 0) {
       this.quality = this.autoQuality || !this.quality ? this.fittingQuality() : this.quality;
       const chosen = sources.find((source) => source.cols === this.quality);
-      if (chosen) await this.load(chosen.src);
+      if (chosen) await this.load(this.variant(chosen.src));
       return;
     }
     const src = this.getAttribute('src');
@@ -303,6 +303,12 @@ export class GlyphPlayerElement extends HTMLElement {
     } catch {
       return [];
     }
+  }
+
+  /** A grid variant plays the sound embedded in the main file (`src`) when it carries none of its own. */
+  private variant(src: string): Source | string {
+    const main = this.getAttribute('src');
+    return main && main !== src && /\.gcast(?:$|[?#])/i.test(src) ? { type: 'gcast', src, sound: main } : src;
   }
 
   /** The largest grid whose cells stay at least 8 device pixels wide in this player. */
@@ -335,7 +341,7 @@ export class GlyphPlayerElement extends HTMLElement {
     const time = this.player.currentTime;
     const playing = !this.player.paused;
     this.quality = cols;
-    await this.load(source.src);
+    await this.load(this.variant(source.src));
     await this.player.seek(time);
     if (playing) await this.player.play().catch(() => undefined);
   }

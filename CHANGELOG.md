@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- Grid variants without their own sound play the sound embedded in the main file (`src`): switching quality, or Auto picking 120 columns on a phone, no longer leaves the video silent
+
 ## 1.0.1
 
 - Quality menu: "Auto" picks the grid by the player size (and again in fullscreen or after rotation) and steps down after three stalls in a minute

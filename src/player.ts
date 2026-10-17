@@ -54,6 +54,8 @@ export type Source =
       readonly src: string;
       /** Audio that plays along and drives the clock. */
       readonly audio?: string;
+      /** Another `.gcast` whose embedded sound plays when this one has none: grid variants share the main file's sound. */
+      readonly sound?: string;
       /** Known duration in seconds for live streams whose header does not carry a frame count. */
       readonly duration?: number;
       /** Builds URLs that start at a given second, for server streams that cannot be seeked by downloading ahead. */
@@ -292,6 +294,13 @@ export class GlyphPlayer extends EventTarget {
     this.emit('durationchange');
     this.draw();
     if (!state.done && !source.restart && !urls.src.startsWith('blob:')) void this.loadIndex(state);
+    // a grid variant without sound: the main file's, once it is clear the stream itself has none
+    if (source.sound && !urls.audio) {
+      void (async () => {
+        while (!state.done && !this.mediaClock && this.stream === state && state.chunks.length < 2) await new Promise((wait) => setTimeout(wait, 100));
+        if (!this.mediaClock && this.stream === state) await this.borrowSound(state, source.sound ?? '');
+      })();
+    }
   }
 
   /**
@@ -342,18 +351,53 @@ export class GlyphPlayer extends EventTarget {
       this.emit('loadedmetadata');
       this.emit('durationchange');
       this.draw();
+      if (first.offset - soundStart > 6) this.attachSound(state, state.url, start, soundStart, first.offset, info);
+      else if (state.source.sound) void this.borrowSound(state, state.source.sound);
+      return true;
+    } catch (error) {
+      if (state.abort.signal.aborted || state.reader.info) throw error;
+      return false;
+    }
+  }
+
+  /** Plays the embedded sound of another `.gcast`: finds its sound region from its first bytes and its index. */
+  private async borrowSound(state: StreamState, url: string): Promise<void> {
+    if (this.track || this.mediaClock) return;
+    try {
+      const head = await fetch(url, { headers: { range: 'bytes=0-65535' }, signal: state.abort.signal });
+      if (head.status !== 206) return;
+      const start = new Uint8Array(await head.arrayBuffer());
+      const view = new DataView(start.buffer, start.byteOffset, start.byteLength);
+      let soundStart = 20;
+      if (start.length >= 26 && view.getUint16(24, true) === 0xfffe) soundStart += 6 + view.getUint32(20, true);
+      const tail = await fetch(url, { headers: { range: `bytes=-${INDEX_TRAILER}` }, signal: state.abort.signal });
+      const length = tail.status === 206 ? indexLength(new Uint8Array(await tail.arrayBuffer())) : null;
+      if (!length) return;
+      const index = await fetch(url, { headers: { range: `bytes=-${length}` }, signal: state.abort.signal });
+      const first = index.status === 206 ? readIndex(new Uint8Array(await index.arrayBuffer()))[0] : undefined;
+      const info = state.reader.info;
+      if (!first || !info || this.stream !== state || first.offset - soundStart <= 6) return;
+      this.attachSound(state, url, start, soundStart, first.offset, info);
+    } catch {
+      // without sound the picture keeps playing on its own clock
+    }
+  }
+
+  /** Starts the embedded sound that lies in `url` between `soundStart` and the first picture chunk at `end`. */
+  private attachSound(state: StreamState, url: string, start: Uint8Array, soundStart: number, end: number, info: StreamInfo): void {
+      const view = new DataView(start.buffer, start.byteOffset, start.byteLength);
       // Ogg sound plays window by window from where the picture is; other sound types load whole as before
       const kind = start.length >= soundStart + 10 && start[soundStart + 6] === 0x4f && start[soundStart + 7] === 0x67 && start[soundStart + 8] === 0x67 && start[soundStart + 9] === 0x53;
       if (kind && typeof AudioContext !== 'undefined') {
         const piece = view.getUint32(soundStart, true);
-        const region = first.offset - soundStart;
+        const region = end - soundStart;
         const count = Math.ceil(region / (piece + 6));
         const size = region - count * 6;
         // the sound is cut into pieces of `piece` bytes, each behind a 6-byte chunk head: map sound bytes to file bytes
         const at = (position: number): number => soundStart + Math.floor(position / piece) * (piece + 6) + 6 + (position % piece);
         const read = async (from: number, to: number): Promise<Uint8Array> => {
           const last = Math.min(size - 1, to);
-          const response = await fetch(state.url, { headers: { range: `bytes=${at(from)}-${at(last)}` }, signal: state.abort.signal });
+          const response = await fetch(url, { headers: { range: `bytes=${at(from)}-${at(last)}` }, signal: state.abort.signal });
           if (response.status !== 206) throw new GlyphcastError(`Sound range: HTTP ${response.status}`);
           const raw = new Uint8Array(await response.arrayBuffer());
           const out = new Uint8Array(last - from + 1);
@@ -370,18 +414,13 @@ export class GlyphPlayer extends EventTarget {
         this.track.muted = this.media.muted;
         if (!this.paused) void this.track.play(this.currentTime, this.rate);
         else this.track.prepare(this.currentTime);
-      } else void this.loadSound(state, soundStart, first.offset - 1, info);
-      return true;
-    } catch (error) {
-      if (state.abort.signal.aborted || state.reader.info) throw error;
-      return false;
-    }
+      } else void this.loadSound(state, url, soundStart, end - 1, info);
   }
 
   /** Downloads the embedded sound region and switches the clock to it at the current time. */
-  private async loadSound(state: StreamState, from: number, to: number, info: StreamInfo): Promise<void> {
+  private async loadSound(state: StreamState, url: string, from: number, to: number, info: StreamInfo): Promise<void> {
     try {
-      const response = await fetch(state.url, { headers: { range: `bytes=${from}-${to}` }, signal: state.abort.signal });
+      const response = await fetch(url, { headers: { range: `bytes=${from}-${to}` }, signal: state.abort.signal });
       if (response.status !== 206) return;
       const reader = new StreamReader(info, 0);
       const pieces: Uint8Array[] = [];
