@@ -6,7 +6,7 @@
     "build": "tsc --noEmit && vite build && vite build --mode converter && node -e \"require('fs').renameSync('../../gcast-converter/docs/converter.html','../../gcast-converter/docs/index.html')\""
   },
   "dependencies": {
-    "glyphcast": "^1.0.1",
+    "glyphcast": "^1.0.2",
     "react": "19.1.1",
     "react-dom": "19.1.1"
   },
