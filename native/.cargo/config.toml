@@ -1,0 +1,7 @@
+# one exe without the Visual C++ runtime DLLs
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+# the bundled libopus asks for an old CMake; newer ones build it fine with this
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

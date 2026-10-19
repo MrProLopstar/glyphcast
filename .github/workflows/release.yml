@@ -1,6 +1,6 @@
 name: Release
 
-# A GitHub release for every version tag, with the notes from CHANGELOG.md
+# A GitHub release for every version tag: notes from CHANGELOG.md, plus glc.exe, the standalone player for Windows
 on:
   push:
     tags: ['v*']
@@ -10,12 +10,19 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+      - name: Build glc.exe
+        working-directory: native
+        run: cargo build --release
       - name: Notes from the changelog
-        run: awk -v v="## ${TAG#v}" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
-      - run: gh release create "$TAG" --title "glyphcast $TAG" --notes-file notes.md
+        shell: bash
+        run: |
+          awk -v v="## ${TAG#v}" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
+          printf '\n---\n**glc.exe** plays `.gcast` files in the Windows console, with sound, and needs nothing installed (under 1 MB). Drop a file onto it, or start it and drag files into the window. Space pauses, ←/→ seek, ↑/↓ volume, Q quits. It reads files made by glyphcast 1.0 and later.\n' >> notes.md
+      - shell: bash
+        run: gh release create "$TAG" native/target/release/glc.exe --title "glyphcast $TAG" --notes-file notes.md

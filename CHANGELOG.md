@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0
+
+- glc.exe for Windows, attached to every GitHub release: a native .gcast player for the console with sound, under 1 MB and with nothing to install. Drop a file onto it or drag files into its window; Space, ←/→, ↑/↓ and Q work as in `glc play`
+
 ## 1.1.0
 
 - `glc login`: signs in with Google in the browser for publishing; uploads to the hub now need a Google sign-in (on the site or with `glc login`) instead of being anonymous
