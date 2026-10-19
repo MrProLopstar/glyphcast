@@ -109,7 +109,11 @@ npx glyphcast micro movie.mp4 --cols 180                        # крошечн
 ```sh
 npx glyphcast hub                  # список и поиск
 npx glyphcast play hub:<имя>       # смотреть со звуком, паузой и перемоткой
+npx glyphcast login                # вход через Google (в браузере), нужен для загрузки
+npx glyphcast publish movie.mp4 --title "Название"   # закодировать три сетки со звуком и загрузить
 ```
+
+Загрузка требует входа через Google — на сайте или командой `glc login`. Новое видео сразу открывается по ссылке, а в общий список попадает после проверки. [Правила и конфиденциальность](https://glc-hub.1lop.ru/rules).
 
 ## Лицензия
 

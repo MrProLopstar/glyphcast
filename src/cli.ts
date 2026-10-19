@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { homedir, tmpdir } from 'node:os';
 import { open } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -78,7 +80,12 @@ const HELP: Record<string, string> = {
                           views and votes; only with the hub key (GLYPHCAST_HUB_KEY)
     --source URL          link to the original (YouTube and so on), shown in the player
 
-  GLYPHCAST_HUB_KEY gives admin rights (listing right away); without it uploads go to review.`,
+  Uploads need a Google sign-in: run glc login first (it lasts an hour). Uploads go to review before the open
+  list. GLYPHCAST_HUB_KEY gives admin rights instead (listing right away, --replace).`,
+  login: `glyphcast login
+
+  Opens the hub's Google sign-in in the browser and keeps the sign-in for glc publish. Google's sign-in lasts
+  an hour; run it again when publish asks.`,
   hub: `glyphcast hub [search]
 
   Opens the list of videos in the gcast hub: arrows choose, typing searches, Enter plays,
@@ -100,7 +107,8 @@ const USAGE = `glyphcast: video as glyphs   (glc is the short name)
   glc encode <video...>        make a .gcast from a video
   glc play <source>            play in the terminal: file, URL, video, hub:name, live:room
   glc hub [search]             list videos in the gcast hub
-  glc publish <file.gcast>     upload to the hub
+  glc publish <file.gcast>     upload to the hub (after glc login)
+  glc login                    sign in with Google for publishing
   glc info <file.gcast>        describe a file
   glc micro <video>            tiny H.264 for GlyphVideo
   glc serve                    live streams for <glyph-player>
@@ -164,6 +172,7 @@ const main = async (): Promise<void> => {
     return;
   }
   const inputs = positionals.slice(1);
+  if (command === 'login') return login();
   if (command === 'serve') {
     const port = values.port ? number('port', values.port) : 8787;
     const host = values.host ?? '127.0.0.1';
@@ -193,7 +202,9 @@ const main = async (): Promise<void> => {
       values = { ...values, image: values.image ?? join(folder, 'main.jpg'), variant: [...(values.variant ?? []), ...variants] };
       input = main;
     }
-    const auth: Record<string, string> = key ? { 'x-hub-key': key } : {};
+    const google = key ? null : savedSignIn();
+    if (!key && !google) throw new Error('Uploads need a Google sign-in: run glc login first');
+    const auth: Record<string, string> = key ? { 'x-hub-key': key } : { authorization: `Bearer ${google}` };
     const { files } = await hub();
     const file = input as string;
     const license = values.license ?? 'own';
@@ -366,8 +377,59 @@ interface HubVideo {
   readonly variants?: readonly number[];
 }
 
+const hubSite = (): string => (process.env['GLYPHCAST_HUB'] ?? 'https://glc-hub.1lop.ru').replace(/\/$/, '');
+const signInFile = (): string => join(homedir(), '.glyphcast', 'google.json');
+
+/** The Google sign-in kept by glc login, if it is still good for at least a few minutes. */
+const savedSignIn = (): string | null => {
+  try {
+    const { token, until } = JSON.parse(readFileSync(signInFile(), 'utf8')) as { token: string; until: number };
+    return until > Date.now() + 5 * 60000 ? token : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * glc login: a one-off server on 127.0.0.1 receives the ID token from the hub's sign-in page, which the browser
+ * opens with the server's port. Nothing but that page on this computer can reach it.
+ */
+const login = async (): Promise<void> => {
+  const site = hubSite();
+  const token = await new Promise<string>((resolve, reject) => {
+    const server = createServer((request, response) => {
+      const headers = { 'access-control-allow-origin': site, 'access-control-allow-methods': 'POST', 'access-control-allow-private-network': 'true' };
+      if (request.method === 'OPTIONS') return void response.writeHead(204, headers).end();
+      if (request.method !== 'POST' || request.url !== '/token') return void response.writeHead(404, headers).end();
+      let body = '';
+      request.on('data', (part: Buffer) => (body += part.toString()));
+      request.on('end', () => {
+        response.writeHead(body.split('.').length === 3 ? 204 : 400, headers).end();
+        if (body.split('.').length !== 3) return;
+        server.close();
+        resolve(body);
+      });
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const url = `${site}/login?port=${typeof address === 'object' && address ? address.port : 0}`;
+      console.log(`Sign in with Google in the browser: ${url}`);
+      const opener = process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+      spawn(opener[0] as string, opener[1] as string[], { stdio: 'ignore', detached: true }).on('error', () => undefined).unref();
+    });
+    setTimeout(() => {
+      server.close();
+      reject(new Error('No sign-in within 5 minutes; run glc login again'));
+    }, 5 * 60000).unref();
+  });
+  const payload = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString()) as { email?: string; exp?: number };
+  mkdirSync(join(homedir(), '.glyphcast'), { recursive: true });
+  writeFileSync(signInFile(), JSON.stringify({ token, until: (payload.exp ?? 0) * 1000 }), { mode: 0o600 });
+  console.log(`Signed in as ${payload.email ?? 'a Google account'}; glc publish can upload for the next hour.`);
+};
+
 const hub = async (): Promise<{ readonly files: string; readonly videos: HubVideo[] }> => {
-  const base = (process.env['GLYPHCAST_HUB'] ?? 'https://glc-hub.1lop.ru').replace(/\/$/, '');
+  const base = hubSite();
   const config = await fetch(`${base}/hub.json`);
   if (!config.ok) throw new Error(`The hub at ${base} does not answer`);
   const files = ((await config.json()) as { files: string }).files.replace(/\/$/, '');

@@ -1,0 +1,21 @@
+name: Release
+
+# A GitHub release for every version tag, with the notes from CHANGELOG.md
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Notes from the changelog
+        run: awk -v v="## ${TAG#v}" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
+      - run: gh release create "$TAG" --title "glyphcast $TAG" --notes-file notes.md

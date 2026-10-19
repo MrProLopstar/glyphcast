@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0
+
+- `glc login`: signs in with Google in the browser for publishing; uploads to the hub now need a Google sign-in (on the site or with `glc login`) instead of being anonymous
+- `glc publish` without the hub key uses that sign-in and says so when it is missing or has run out
+
 ## 1.0.2
 
 - Grid variants without their own sound play the sound embedded in the main file (`src`): switching quality, or Auto picking 120 columns on a phone, no longer leaves the video silent

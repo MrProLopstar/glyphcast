@@ -9,7 +9,7 @@
 
 <sub>One Piece opening in braille mode, 180 columns.</sub>
 
-Video as colored glyphs. A complete player for the browser: controls, settings, subtitles, keyboard shortcuts, picture-in-picture and fullscreen, with every frame redrawn as characters by a WebGL2 shader. A server can also send glyph frames instead of video, so the browser receives a compact `.gcast` stream rather than the footage itself. The same stream plays in a terminal too.
+Video as colored glyphs. A complete player for the browser: controls, settings, subtitles, keyboard shortcuts, picture-in-picture and fullscreen, with every frame redrawn as characters by a WebGL2 shader. A server can also send glyph frames instead of video, so the browser receives a compact `.gcast` stream rather than the footage itself. The same stream plays in a terminal too. The `.gcast` format is frozen since 1.0 and described completely in [FORMAT.md](FORMAT.md).
 
 ```sh
 npm install glyphcast          # or: npm i -g glyphcast, then glc …
@@ -118,7 +118,11 @@ Format 6 files are 32–39% smaller than format 5 on films, cartoons and screen 
 ```sh
 npx glyphcast hub                  # list and search
 npx glyphcast play hub:<name>      # watch with sound, pause and seeking
+npx glyphcast login                # sign in with Google (in the browser), needed to upload
+npx glyphcast publish movie.mp4 --title "Name"   # encode three grids with sound and upload
 ```
+
+Uploads need a Google sign-in, on the site or with `glc login`; a new video opens by its link at once and reaches the open list after review. [Rules and privacy](https://glc-hub.1lop.ru/rules).
 
 ## License
 
