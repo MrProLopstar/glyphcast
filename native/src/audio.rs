@@ -21,14 +21,14 @@ struct Page {
 enum Command {
     Start(f64),
     Pause,
-    Resume,
     Volume(f32),
 }
 
 pub struct Audio {
     commands: Sender<Command>,
     device: Arc<AtomicIsize>,
-    base: Arc<Mutex<f64>>,
+    /// Playback time at the last start and the device position then: some drivers do not reset it.
+    base: Arc<Mutex<(f64, f64)>>,
     started: Arc<AtomicBool>,
     block: usize,
 }
@@ -70,7 +70,7 @@ impl Audio {
         let preskip = u16::from_le_bytes([head[10], head[11]]) as i64;
         let (commands, receive) = channel();
         let device = Arc::new(AtomicIsize::new(0));
-        let base = Arc::new(Mutex::new(0.0));
+        let base = Arc::new(Mutex::new((0.0, 0.0)));
         let started = Arc::new(AtomicBool::new(false));
         let (d, b, s) = (device.clone(), base.clone(), started.clone());
         thread::spawn(move || feed(pages, channels, preskip, receive, d, b, s));
@@ -83,9 +83,6 @@ impl Audio {
     pub fn pause(&self) {
         let _ = self.commands.send(Command::Pause);
     }
-    pub fn resume(&self) {
-        let _ = self.commands.send(Command::Resume);
-    }
     pub fn volume(&self, level: f32) {
         let _ = self.commands.send(Command::Volume(level));
     }
@@ -95,19 +92,23 @@ impl Audio {
         if !self.started.load(Ordering::Acquire) {
             return None;
         }
-        let device = self.device.load(Ordering::Acquire) as HWAVEOUT;
-        let mut time: MMTIME = unsafe { std::mem::zeroed() };
-        time.wType = TIME_SAMPLES;
-        if unsafe { waveOutGetPosition(device, &mut time, std::mem::size_of::<MMTIME>() as u32) } != 0 {
-            return None;
-        }
-        // drivers may answer in bytes instead of samples
-        let samples = if time.wType == TIME_BYTES { (unsafe { time.u.cb }) as f64 / self.block as f64 } else { (unsafe { time.u.sample }) as f64 };
-        Some(*self.base.lock().unwrap() + samples / RATE as f64)
+        let samples = position(self.device.load(Ordering::Acquire) as HWAVEOUT, self.block)?;
+        let (at, offset) = *self.base.lock().unwrap();
+        Some(at + (samples - offset).max(0.0) / RATE as f64)
     }
 }
 
-fn feed(pages: Vec<Page>, channels: usize, preskip: i64, commands: Receiver<Command>, device: Arc<AtomicIsize>, base: Arc<Mutex<f64>>, started: Arc<AtomicBool>) {
+/// Samples the device has played since it was opened (drivers may count bytes instead).
+fn position(device: HWAVEOUT, block: usize) -> Option<f64> {
+    let mut time: MMTIME = unsafe { std::mem::zeroed() };
+    time.wType = TIME_SAMPLES;
+    if unsafe { waveOutGetPosition(device, &mut time, std::mem::size_of::<MMTIME>() as u32) } != 0 {
+        return None;
+    }
+    Some(if time.wType == TIME_BYTES { (unsafe { time.u.cb }) as f64 / block as f64 } else { (unsafe { time.u.sample }) as f64 })
+}
+
+fn feed(pages: Vec<Page>, channels: usize, preskip: i64, commands: Receiver<Command>, device: Arc<AtomicIsize>, base: Arc<Mutex<(f64, f64)>>, started: Arc<AtomicBool>) {
     let format = WAVEFORMATEX {
         wFormatTag: WAVE_FORMAT_PCM as u16,
         nChannels: channels as u16,
@@ -153,15 +154,12 @@ fn feed(pages: Vec<Page>, channels: usize, preskip: i64, commands: Receiver<Comm
                     skip = (target - decoded).max(0) * channels as i64;
                     decoder.reset_state().ok();
                     pending.clear();
-                    *base.lock().unwrap() = at;
+                    *base.lock().unwrap() = (at, position(handle, channels * 2).unwrap_or(0.0));
                     playing = true;
                     started.store(true, Ordering::Release);
                 },
                 Command::Pause => unsafe {
                     waveOutPause(handle);
-                },
-                Command::Resume => unsafe {
-                    waveOutRestart(handle);
                 },
                 Command::Volume(level) => volume = level,
             }

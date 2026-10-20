@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+
+- glc.exe does what `glc play` does: braille, glyph and half-block modes, glyph sets, colors, saturation, background, 2× sharpness, smooth in-between frames, auto levels, subtitles, J/L and 0–9 jumps, a clickable status bar, links and hub videos (`hub` opens the list, `hub:<id>` plays one). Still under 1 MB with nothing to install
+- The terminal player's status bar is in Russian
+- `glc play hub:…` plays the main file, which carries the sound
+
 ## 1.2.0
 
 - glc.exe for Windows, attached to every GitHub release: a native .gcast player for the console with sound, under 1 MB and with nothing to install. Drop a file onto it or drag files into its window; Space, ←/→, ↑/↓ and Q work as in `glc play`

@@ -445,11 +445,8 @@ const playHub = async (name: string, ffmpeg?: string): Promise<void> => {
   const id = video?.id ?? name;
   if (!/^[\w-]{11}$/.test(id)) throw new Error(`No video "${name}" in the hub; see glyphcast hub`);
   const subtitles = video?.subtitles ? await fetch(`${files}/v/${id}.vtt`).then((response) => (response.ok ? response.text() : undefined)).catch(() => undefined) : undefined;
-  const width = process.stdout.columns || 120;
-  const grids = [video?.cols ?? 0, ...(video?.variants ?? [])].filter((cols) => cols > 0).sort((a, b) => a - b);
-  const pick = grids.filter((cols) => cols <= width * 1.5).at(-1) ?? grids[0];
-  const file = video && pick && pick !== video.cols ? `${id}-${pick}` : id;
-  await playInTerminal(`${files}/v/${file}.gcast`, { title: video?.title ?? `hub:${name}`, ...(subtitles ? { subtitles } : {}), ...(ffmpeg ? { ffmpeg } : {}) });
+  // the main file: the other grids carry no sound, and the terminal scales any grid to its width anyway
+  await playInTerminal(`${files}/v/${id}.gcast`, { title: video?.title ?? `hub:${name}`, ...(subtitles ? { subtitles } : {}), ...(ffmpeg ? { ffmpeg } : {}) });
 };
 
 /** Columns a string takes in a terminal: CJK and emoji take two. */

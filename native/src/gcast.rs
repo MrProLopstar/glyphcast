@@ -12,15 +12,21 @@ pub struct Info {
 
 pub struct Chunk {
     pub start: usize,
-    pub data: std::ops::Range<usize>,
+    pub data: Vec<u8>,
 }
 
-pub struct File {
-    pub bytes: Vec<u8>,
-    pub info: Info,
+/// A stream read as it arrives: the header, then subtitles, sound and frame chunks in order. Files and downloads
+/// feed it piece by piece; whatever has arrived can be played.
+pub struct Library {
+    pub info: Option<Info>,
     pub chunks: Vec<Chunk>,
-    /// The embedded audio file, pieces joined.
+    /// The embedded audio file, complete once the first frame chunk has arrived.
     pub audio: Vec<u8>,
+    pub subtitles: Option<String>,
+    pub done: bool,
+    pub error: Option<String>,
+    pending: Vec<u8>,
+    frames: usize,
 }
 
 fn u16le(b: &[u8], at: usize) -> usize {
@@ -30,46 +36,82 @@ fn u32le(b: &[u8], at: usize) -> usize {
     u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]) as usize
 }
 
-pub fn open(bytes: Vec<u8>) -> Result<File, String> {
-    if bytes.len() < 20 || u32le(&bytes, 0) != 0x5453_4347 {
+impl Library {
+    pub fn new() -> Self {
+        Library { info: None, chunks: Vec::new(), audio: Vec::new(), subtitles: None, done: false, error: None, pending: Vec::new(), frames: 0 }
+    }
+
+    /// Frames in the video: the header's count, or what has arrived of a live stream.
+    pub fn total(&self) -> usize {
+        self.info.as_ref().map(|info| info.frames).unwrap_or(0).max(self.frames)
+    }
+
+    pub fn audio_ready(&self) -> bool {
+        !self.chunks.is_empty() || self.done
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) {
+        if self.error.is_some() {
+            return;
+        }
+        self.pending.extend_from_slice(bytes);
+        let mut at = 0;
+        if self.info.is_none() {
+            if self.pending.len() < 20 {
+                return;
+            }
+            match header(&self.pending[..20]) {
+                Ok(info) => self.info = Some(info),
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+            at = 20;
+        }
+        while self.pending.len() - at >= 6 {
+            let size = u32le(&self.pending, at);
+            let kind = u16le(&self.pending, at + 4);
+            if self.pending.len() - at - 6 < size {
+                break;
+            }
+            let data = &self.pending[at + 6..at + 6 + size];
+            match kind {
+                0 => self.audio.extend_from_slice(data),
+                1..=0xffef => {
+                    self.chunks.push(Chunk { start: self.frames, data: data.to_vec() });
+                    self.frames += kind;
+                }
+                0xfffe => self.subtitles = Some(String::from_utf8_lossy(data).into_owned()),
+                _ => {}
+            }
+            at += 6 + size;
+        }
+        self.pending.drain(..at);
+    }
+}
+
+fn header(bytes: &[u8]) -> Result<Info, String> {
+    if u32le(bytes, 0) != 0x5453_4347 {
         return Err("это не файл .gcast".into());
     }
     let version = bytes[4];
     if version != 6 {
-        return Err(format!("формат {version}: этот плеер читает файлы glyphcast 1.0 (формат 6). Перекодируйте файл: glc encode"));
+        return Err(format!("формат {version}: этот плеер читает файлы glyphcast 1.0 и новее (формат 6). Перекодируйте файл командой glc encode или в конвертере"));
     }
     let flags = bytes[5];
     let info = Info {
-        cols: u16le(&bytes, 6),
-        rows: u16le(&bytes, 8),
+        cols: u16le(bytes, 6),
+        rows: u16le(bytes, 8),
         fps: f32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]) as f64,
-        frames: u32le(&bytes, 16),
+        frames: u32le(bytes, 16),
         detail: flags & 128 != 0,
         shades: flags & 128 != 0 && flags & 64 != 0,
     };
     if info.cols == 0 || info.rows == 0 || !(info.fps > 0.0) {
         return Err("повреждён заголовок".into());
     }
-    let mut chunks = Vec::new();
-    let mut audio = Vec::new();
-    let mut at = 20;
-    let mut frame = 0;
-    while at + 6 <= bytes.len() {
-        let size = u32le(&bytes, at);
-        let kind = u16le(&bytes, at + 4);
-        let data = at + 6..(at + 6 + size).min(bytes.len());
-        at += 6 + size;
-        match kind {
-            0 => audio.extend_from_slice(&bytes[data]),
-            1..=0xffef => {
-                chunks.push(Chunk { start: frame, data });
-                frame += kind;
-            }
-            _ => {}
-        }
-    }
-    let info = Info { frames: frame, ..info };
-    Ok(File { bytes, info, chunks, audio })
+    Ok(info)
 }
 
 // ---- range decoder and contexts ----
@@ -183,6 +225,8 @@ impl<'a> Bits<'a> {
 
 /// A decoded frame: RGB of every cell, its dot mask and, where stored, the color of its dark dots (0 = guess).
 pub struct Frame {
+    /// Each block's motion in cells, for drawing frames in between.
+    pub motion: Vec<i8>,
     pub rgb: Vec<[u8; 3]>,
     pub masks: Vec<u8>,
     pub shades: Option<Vec<[u8; 3]>>,
@@ -464,7 +508,8 @@ pub fn decode_chunk(info: &Info, data: &[u8]) -> Result<Vec<Frame>, String> {
                 dots[((y * 4 + (d >> 1)) * w + x * 2 + (d & 1)) as usize] = if m == 0 || (m >> d) & 1 == 1 { v as u8 } else { dark as u8 };
             }
         }
-        out.push(Frame { rgb, masks: masks.clone(), shades });
+        let motion = vec_.iter().enumerate().map(|(i, &v)| ((v as f64 / if i % 2 == 0 { 2.0 } else { 4.0 }) + 0.5).floor() as i8).collect();
+        out.push(Frame { motion, rgb, masks: masks.clone(), shades });
         reference = cur;
         ref_masks = masks;
         ref_dots = dots;
