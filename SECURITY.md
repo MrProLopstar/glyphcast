@@ -6,7 +6,7 @@ Only the latest release of each part gets fixes: the npm/JSR package `glyphcast`
 
 ## Reporting a vulnerability
 
-Please do not open a public issue. Use [Report a vulnerability](https://github.com/MrProLopstar/glyphcast/security/advisories/new) (private) or write to gosyar@gmail.com. You get an answer within a week; a fix for a confirmed issue ships as a patch release with credit, unless you prefer otherwise.
+Please do not open a public issue. Use [Report a vulnerability](https://github.com/MrProLopstar/glyphcast/security/advisories/new) (private). You get an answer within a week; a fix for a confirmed issue ships as a patch release with credit, unless you prefer otherwise.
 
 ## Scope
 
