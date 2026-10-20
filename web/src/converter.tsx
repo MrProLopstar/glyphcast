@@ -4,7 +4,7 @@ import { convert, megabytes, type Converted } from './encode';
 import { Player } from './Player';
 import './site.css';
 
-const quote = (name: string): string => (/[\s"'&()]/.test(name) ? `"${name.replace(/"/g, '\\"')}"` : name);
+const quote = (name: string): string => (/[\s"'&()]/.test(name) ? `"${name.replace(/[\\"]/g, '\\$&')}"` : name);
 
 const Converter = () => {
   const [file, setFile] = useState<File | null>(null);

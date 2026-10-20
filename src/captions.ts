@@ -20,7 +20,7 @@ export const parseCaptions = (text: string): Cue[] => {
     const [from, to] = (lines[timing] ?? '').split('-->');
     const start = seconds(from ?? '');
     const end = seconds((to ?? '').trim().split(/\s+/)[0] ?? '');
-    const body = lines.slice(timing + 1).join('\n').replace(/<[^>]*>/g, '').trim();
+    const body = lines.slice(timing + 1).join('\n').replace(/<[^<>]*>/g, '').trim();
     if (body && Number.isFinite(start) && Number.isFinite(end)) cues.push({ start, end, text: body });
   }
   return cues.sort((a, b) => a.start - b.start);
