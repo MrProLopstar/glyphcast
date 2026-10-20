@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.3
+
+- A phone held sideways (fullscreen) gets the settings as a full-height side panel
+
 ## 1.5.2
 
 - On phones the settings open as a sheet over the bottom of the screen: big buttons, the page dimmed, Done always at hand

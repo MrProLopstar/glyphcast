@@ -130,6 +130,8 @@ svg { width: 22px; height: 22px; fill: currentColor; }
 .menu.sheet .line { padding: 4px 16px 10px; }
 .menu.sheet.on { display: flex; flex-direction: column; box-sizing: border-box; }
 .menu.sheet > * { flex: none; }
+.menu.sheet.side { inset: 0 0 0 auto; width: min(420px, 55vw); max-height: none; border-radius: 16px 0 0 16px; padding-top: 4px; }
+.menu.sheet.side::before { display: none; }
 .menu.sheet .close { display: block; order: 1; position: sticky; bottom: 0; box-sizing: border-box; width: calc(100% - 32px); margin: 16px 16px 0; text-align: center; box-shadow: 0 -12px 16px #17171b, 0 14px 0 14px #17171b; padding: 12px; border-radius: 12px; background: var(--accent); color: #111; font-weight: 600; font-size: 16px; }
 `;
 
@@ -683,11 +685,14 @@ export class GlyphPlayerElement extends HTMLElement {
       scrim.addEventListener('click', () => this.toggleMenu(false));
       this.root.append(scrim);
     }
-    const sheet = open && this.frame.clientWidth <= 520;
+    // a phone held sideways (fullscreen video) gets a side panel over the full height instead
+    const side = open && window.innerHeight <= 500 && matchMedia('(pointer: coarse)').matches;
+    const sheet = side || (open && this.frame.clientWidth <= 520);
     // the player is a size container, which traps fixed elements, so the sheet lives outside it
     (sheet ? this.root : this.frame).append(menu);
     if (sheet) this.root.insertBefore(scrim, menu);
     menu.classList.toggle('sheet', sheet);
+    menu.classList.toggle('side', side);
     menu.classList.toggle('on', open);
     scrim.classList.toggle('on', sheet);
     this.renderMenu();
