@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.2
+
+- On phones the settings open as a sheet over the bottom of the screen: big buttons, the page dimmed, Done always at hand
+
 ## 1.5.1
 
 - glc.exe: sound stops when you leave a video for the hub menu

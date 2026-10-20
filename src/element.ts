@@ -117,8 +117,20 @@ svg { width: 22px; height: 22px; fill: currentColor; }
   .chips { flex-wrap: nowrap; overflow-x: auto; padding: 0 12px 4px; scrollbar-width: none; }
   .chips::-webkit-scrollbar { display: none; }
   .chips button { flex: none; padding: 6px 12px; }
-  .menu .close { display: block; position: sticky; top: 0; z-index: 1; margin: 0 8px 0 auto; padding: 6px 12px; border-radius: 999px; background: var(--accent); color: #111; font-weight: 600; }
 }
+/* on a small player the menu is a sheet over the bottom of the screen, like on YouTube: big targets, the page dimmed behind */
+.scrim { position: fixed; inset: 0; z-index: 2147483646; background: rgba(0,0,0,0.5); display: none; }
+.scrim.on { display: block; }
+.menu.sheet { position: fixed; inset: auto 0 0 0; z-index: 2147483647; min-width: 0; max-height: min(75vh, 560px); padding: 6px 0 calc(12px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; background: #17171b; color: var(--ink, #fff); overscroll-behavior: contain; font: 15px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.menu.sheet::before { content: ''; display: block; width: 40px; height: 4px; margin: 4px auto 6px; border-radius: 2px; background: rgba(255,255,255,0.3); }
+.menu.sheet h4 { margin: 12px 16px 6px; font-size: 12px; }
+.menu.sheet .chips { flex-wrap: wrap; overflow: visible; padding: 0 16px; gap: 8px; }
+.menu.sheet .chips button { padding: 9px 16px; font-size: 15px; }
+.menu.sheet .toggle { padding: 12px 16px; font-size: 15px; border-radius: 0; }
+.menu.sheet .line { padding: 4px 16px 10px; }
+.menu.sheet.on { display: flex; flex-direction: column; box-sizing: border-box; }
+.menu.sheet > * { flex: none; }
+.menu.sheet .close { display: block; order: 1; position: sticky; bottom: 0; box-sizing: border-box; width: calc(100% - 32px); margin: 16px 16px 0; text-align: center; box-shadow: 0 -12px 16px #17171b, 0 14px 0 14px #17171b; padding: 12px; border-radius: 12px; background: var(--accent); color: #111; font-weight: 600; font-size: 16px; }
 `;
 
 const icon = (path: string): string => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
@@ -197,7 +209,7 @@ export class GlyphPlayerElement extends HTMLElement {
     if (!frame) throw new Error('Missing .player');
     this.frame = frame;
     const find = (selector: string): HTMLElement => {
-      const node = frame.querySelector<HTMLElement>(selector);
+      const node = frame.querySelector<HTMLElement>(selector) ?? this.root.querySelector<HTMLElement>(selector);
       if (!node) throw new Error(`Missing ${selector}`);
       return node;
     };
@@ -502,12 +514,11 @@ export class GlyphPlayerElement extends HTMLElement {
     on('.pip', () => void this.togglePip());
     on('.settings', (event) => {
       event.stopPropagation();
-      this.$('.menu').classList.toggle('on');
-      this.renderMenu();
+      this.toggleMenu(!this.$('.menu').classList.contains('on'));
     });
     this.frame.addEventListener('pointerdown', (event) => this.frame.classList.toggle('touch', event.pointerType === 'touch'));
     this.$('canvas').addEventListener('click', () => {
-      if (this.$('.menu').classList.contains('on')) this.$('.menu').classList.remove('on');
+      if (this.$('.menu').classList.contains('on')) this.toggleMenu(false);
       else if (!this.frame.classList.contains('touch')) this.togglePlay();
       else if (this.frame.classList.contains('idle') || this.player.paused) this.wake();
       else this.frame.classList.add('idle');
@@ -580,7 +591,7 @@ export class GlyphPlayerElement extends HTMLElement {
     this.frame.addEventListener('pointerleave', () => this.sleep(600));
     this.frame.addEventListener('keydown', (event) => this.key(event));
     this.frame.addEventListener('click', (event) => {
-      if (!(event.target as HTMLElement).closest('.menu, .settings')) this.$('.menu').classList.remove('on');
+      if (!(event.target as HTMLElement).closest('.menu, .settings')) this.toggleMenu(false);
     });
     document.addEventListener('fullscreenchange', () => this.update());
   }
@@ -662,6 +673,26 @@ export class GlyphPlayerElement extends HTMLElement {
     if (paused) this.frame.classList.remove('idle');
   }
 
+  /** Opens the settings as a panel over the player, or on a small player as a sheet over the bottom of the screen. */
+  private toggleMenu(open: boolean): void {
+    const menu = this.$('.menu');
+    let scrim = this.root.querySelector<HTMLElement>('.scrim');
+    if (!scrim) {
+      scrim = document.createElement('div');
+      scrim.className = 'scrim';
+      scrim.addEventListener('click', () => this.toggleMenu(false));
+      this.root.append(scrim);
+    }
+    const sheet = open && this.frame.clientWidth <= 520;
+    // the player is a size container, which traps fixed elements, so the sheet lives outside it
+    (sheet ? this.root : this.frame).append(menu);
+    if (sheet) this.root.insertBefore(scrim, menu);
+    menu.classList.toggle('sheet', sheet);
+    menu.classList.toggle('on', open);
+    scrim.classList.toggle('on', sheet);
+    this.renderMenu();
+  }
+
   private renderMenu(): void {
     const menu = this.$('.menu');
     if (!menu.classList.contains('on')) return;
@@ -736,7 +767,7 @@ export class GlyphPlayerElement extends HTMLElement {
     const close = document.createElement('button');
     close.className = 'close';
     close.textContent = 'Готово';
-    close.addEventListener('click', () => menu.classList.remove('on'));
+    close.addEventListener('click', () => this.toggleMenu(false));
     menu.replaceChildren(
       close,
       ...parts,
