@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+
+- `glc telnet movie.gcast`: anyone watches with `telnet host 2323`, each connection with its own player (no sound)
+- `playInTerminal` takes `input` (where keys come from) and `ffplay: ''` to turn sound off
+- README: where glyphcast plays, glc.exe, telnet and the Rust crate
+
 ## 1.4.0
 
 - Rust crate `glyphcast` (native/glyphcast): format 6 encoder and decoder, byte-identical to the JS library, no dependencies

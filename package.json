@@ -1,6 +1,6 @@
 {
   "name": "glyphcast",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Video as colored glyphs: a complete WebGL2 player with controls and PiP, and a glyph stream a server can send instead of video",
   "keywords": [
     "ascii",
@@ -67,7 +67,7 @@
     "type": "git",
     "url": "git+https://github.com/MrProLopstar/glyphcast.git"
   },
-  "homepage": "https://github.com/MrProLopstar/glyphcast#readme",
+  "homepage": "https://glc.1lop.ru",
   "bugs": {
     "url": "https://github.com/MrProLopstar/glyphcast/issues"
   },

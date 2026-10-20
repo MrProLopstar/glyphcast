@@ -9,6 +9,7 @@ import { parseArgs } from 'node:util';
 import { StreamReader } from './format.js';
 import { encodeMicroVideo, encodeVideo, extractAudio, extractPoster } from './node.js';
 import { serve } from './serve.js';
+import { serveTelnet } from './telnet.js';
 import { playInTerminal } from './terminal.js';
 
 const HELP: Record<string, string> = {
@@ -100,6 +101,10 @@ const HELP: Record<string, string> = {
 
   Serves live .gcast streams from YouTube links and videos in --dir for <glyph-player>.
   Needs yt-dlp and ffmpeg.`,
+  telnet: `glyphcast telnet <file.gcast> [--port 2323] [--host 0.0.0.0]
+
+  Plays the file to everyone who connects: telnet <host> 2323. Each viewer gets the usual keys
+  (Space, arrows, M, G, C, Q); no sound over telnet. Needs a terminal with 24-bit color.`,
 };
 
 const USAGE = `glyphcast: video as glyphs   (glc is the short name)
@@ -112,6 +117,7 @@ const USAGE = `glyphcast: video as glyphs   (glc is the short name)
   glc info <file.gcast>        describe a file
   glc micro <video>            tiny H.264 for GlyphVideo
   glc serve                    live streams for <glyph-player>
+  glc telnet <file.gcast>      play a file to anyone with telnet
 
   glc help <command> or glc <command> --help shows every option with examples.
   --lang ru switches the player and the hub list to Russian.`;
@@ -182,6 +188,13 @@ const main = async (): Promise<void> => {
     const host = values.host ?? '127.0.0.1';
     await serve({ port, host, ...(values.dir ? { dir: values.dir } : {}), youtube: !values['no-youtube'], ...(values['yt-dlp'] ? { ytDlp: values['yt-dlp'] } : {}), ...(values.ffmpeg ? { ffmpeg: values.ffmpeg } : {}), onRequest: (line) => console.log(line) });
     console.log(`glyphcast serve: http://${host.includes(':') ? `[${host}]` : host}:${port}`);
+    return;
+  }
+  if (command === 'telnet') {
+    if (!input) throw new Error(HELP['telnet']);
+    const port = values.port ? number('port', values.port) : 2323;
+    await serveTelnet(input, { port, ...(values.host ? { host: values.host } : {}) });
+    console.log(`glyphcast telnet: telnet ${values.host ?? 'localhost'} ${port}`);
     return;
   }
   if (command === 'publish') {

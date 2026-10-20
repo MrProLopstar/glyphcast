@@ -2,7 +2,9 @@
 
 [![npm](https://img.shields.io/npm/v/glyphcast?color=f0a04b)](https://www.npmjs.com/package/glyphcast)
 [![JSR](https://jsr.io/badges/@mrprolopstar/glyphcast)](https://jsr.io/@mrprolopstar/glyphcast)
-
+[![crates.io](https://img.shields.io/crates/v/glyphcast?color=f0a04b)](https://crates.io/crates/glyphcast)
+[![glc.exe](https://img.shields.io/github/v/release/MrProLopstar/glyphcast?label=glc.exe&color=f0a04b)](https://github.com/MrProLopstar/glyphcast/releases/latest)
+[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue)](LICENSE)
 [Русская версия](README.ru.md) · [Playground](https://glc.1lop.ru/) · [Converter](https://gcast.1lop.ru/) · [Hub](https://glc-hub.1lop.ru/)
 
 ![One Piece opening in braille mode](https://glc.1lop.ru/preview.jpg)
@@ -31,6 +33,56 @@ glc help encode                                  # every option with examples
 ```
 
 No bundler? `import 'https://cdn.jsdelivr.net/npm/glyphcast@1/dist/element.js/+esm'`.
+
+## Where it plays
+
+| | | |
+|---|---|---|
+| 🌐 Browser | `<glyph-player>`, React, Vue | WebGL2, controls, subtitles, quality switching |
+| 💻 Terminal | `glc play movie.gcast` | 24-bit color, sound through ffplay, the same keys |
+| 🪟 Windows | [`glc.exe`](https://github.com/MrProLopstar/glyphcast/releases/latest) | native, under 1 MB, sound built in, no Node |
+| 📡 Telnet | `glc telnet movie.gcast` | anyone watches with `telnet host 2323`, no install |
+| 🦀 Rust | [`glyphcast` crate](native/glyphcast) | encoder and decoder, byte-identical to JS, no dependencies |
+
+### glc.exe
+
+A console player for Windows in one file under 1 MB: no Node, no ffmpeg, sound and the hub built in. Download it from [Releases](https://github.com/MrProLopstar/glyphcast/releases/latest), double-click for the hub menu or drop a `.gcast` on it:
+
+```sh
+glc.exe movie.gcast            # play a file
+glc.exe hub:<id>               # a video from the hub
+glc.exe --lang ru              # Russian interface
+```
+
+### Telnet
+
+```sh
+glc telnet movie.gcast --port 2323     # then, from any machine: telnet <host> 2323
+```
+
+Each connection gets its own player with seeking and modes. Telnet carries no sound, and the viewer needs a terminal with 24-bit color (Windows Terminal, iTerm2, most Linux terminals).
+
+### Rust
+
+```toml
+[dependencies]
+glyphcast = "1"
+```
+
+```rust
+use glyphcast::format::{decode_chunk, Reader};
+
+let mut reader = Reader::new();
+reader.push(&std::fs::read("movie.gcast")?)?;
+let info = reader.info.unwrap();
+for chunk in &reader.chunks {
+    for frame in decode_chunk(&info, &chunk.data)? {
+        // frame.rgb: a color per cell, frame.masks: its 2×4 braille dots
+    }
+}
+```
+
+The crate writes byte-for-byte the same files as the JS encoder, about 3.5× faster. More in [native/glyphcast](native/glyphcast).
 
 ## The player
 
@@ -127,7 +179,3 @@ Uploads need a Google sign-in, on the site or with `glc login`; a new video open
 ## License
 
 Mozilla Public License 2.0 (see LICENSE and NOTICE): changes to glyphcast's own files stay open, your code around it can stay closed. Versions up to 0.20.13 were MIT, 0.21.0–0.21.3 Apache 2.0.
-
-## Rust
-
-The `glyphcast` crate in [native/glyphcast](native/glyphcast) encodes and decodes format 6 natively, byte-identical to this library.

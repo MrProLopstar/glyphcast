@@ -28,7 +28,9 @@ export interface TerminalOptions {
   readonly output?: NodeJS.WriteStream;
   /** Path to ffmpeg, for video files. */
   readonly ffmpeg?: string;
-  /** Path to ffplay, which plays the sound embedded in a `.gcast`. Default `ffplay` from PATH; without it playback is silent. */
+  /** Where keys come from. Default `process.stdin`. */
+  readonly input?: NodeJS.ReadStream;
+  /** Path to ffplay, which plays the sound embedded in a `.gcast`. Default `ffplay` from PATH; without it playback is silent, `''` turns sound off. */
   readonly ffplay?: string;
   /** Name shown while loading. Default the input. */
   readonly title?: string;
@@ -526,7 +528,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   });
   const { info } = library;
   const total = (): number => (info.frameCount || library.pieces.reduce((sum, piece) => Math.max(sum, piece.start + piece.frames), 0)) / info.fps;
-  const audio = sounds(library.audio, total, options.ffplay ?? 'ffplay');
+  const audio = sounds(options.ffplay === '' ? null : library.audio, total, options.ffplay || 'ffplay');
   const view = screen(output);
   output.write(`\x1b[${Math.max(1, Math.floor(view.height / 2))};${Math.max(1, Math.floor(view.width / 2) - 6)}H${SPINNER[0]} ${words().loading}`);
   if (output.isTTY) {
@@ -550,7 +552,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   let caption: string | null = null;
   // S turns subtitles on and off; they start on when the video has them
   let showSubtitles = true;
-  const input$ = process.stdin;
+  const input$ = options.input ?? process.stdin;
   let base = 0;
   let startedAt = performance.now();
   let playing = true;

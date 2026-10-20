@@ -2,6 +2,9 @@
 
 [![npm](https://img.shields.io/npm/v/glyphcast?color=f0a04b)](https://www.npmjs.com/package/glyphcast)
 [![JSR](https://jsr.io/badges/@mrprolopstar/glyphcast)](https://jsr.io/@mrprolopstar/glyphcast)
+[![crates.io](https://img.shields.io/crates/v/glyphcast?color=f0a04b)](https://crates.io/crates/glyphcast)
+[![glc.exe](https://img.shields.io/github/v/release/MrProLopstar/glyphcast?label=glc.exe&color=f0a04b)](https://github.com/MrProLopstar/glyphcast/releases/latest)
+[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue)](LICENSE)
 
 [English version](README.md) · [Песочница](https://glc.1lop.ru/) · [Хаб](https://glc-hub.1lop.ru/)
 
@@ -24,6 +27,56 @@ npm install glyphcast
 ```
 
 Без сборщика: `import 'https://cdn.jsdelivr.net/npm/glyphcast@1/dist/element.js/+esm'`.
+
+## Где играет
+
+| | | |
+|---|---|---|
+| 🌐 Браузер | `<glyph-player>`, React, Vue | WebGL2, управление, субтитры, выбор качества |
+| 💻 Терминал | `glc play movie.gcast` | 24-битный цвет, звук через ffplay, те же клавиши |
+| 🪟 Windows | [`glc.exe`](https://github.com/MrProLopstar/glyphcast/releases/latest) | нативный, меньше 1 МБ, звук внутри, без Node |
+| 📡 Telnet | `glc telnet movie.gcast` | смотреть может кто угодно: `telnet host 2323`, без установки |
+| 🦀 Rust | [крейт `glyphcast`](native/glyphcast) | кодер и декодер, байт в байт как JS, без зависимостей |
+
+### glc.exe
+
+Консольный плеер для Windows одним файлом меньше 1 МБ: без Node и ffmpeg, со звуком и хабом. Скачайте из [Releases](https://github.com/MrProLopstar/glyphcast/releases/latest), запустите двойным щелчком для меню хаба или перетащите на него `.gcast`:
+
+```sh
+glc.exe movie.gcast            # файл
+glc.exe hub:<id>               # видео из хаба
+glc.exe --lang ru              # интерфейс на русском
+```
+
+### Telnet
+
+```sh
+glc telnet movie.gcast --port 2323     # затем с любой машины: telnet <host> 2323
+```
+
+Каждое подключение получает свой плеер с перемоткой и режимами. Звука по telnet нет, у зрителя нужен терминал с 24-битным цветом (Windows Terminal, iTerm2, большинство терминалов Linux).
+
+### Rust
+
+```toml
+[dependencies]
+glyphcast = "1"
+```
+
+```rust
+use glyphcast::format::{decode_chunk, Reader};
+
+let mut reader = Reader::new();
+reader.push(&std::fs::read("movie.gcast")?)?;
+let info = reader.info.unwrap();
+for chunk in &reader.chunks {
+    for frame in decode_chunk(&info, &chunk.data)? {
+        // frame.rgb: цвет клетки, frame.masks: её точки Брайля 2×4
+    }
+}
+```
+
+Крейт пишет те же файлы байт в байт, что и JS-кодер, примерно в 3,5 раза быстрее. Подробнее в [native/glyphcast](native/glyphcast).
 
 ## Плеер
 
