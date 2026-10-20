@@ -18,14 +18,14 @@ impl Drop for Handle {
 
 /// Streams `url` into `each` piece by piece; `each` returns false to stop early.
 pub fn get(url: &str, mut each: impl FnMut(&[u8]) -> bool) -> Result<(), String> {
-    let (secure, rest) = if let Some(rest) = url.strip_prefix("https://") { (true, rest) } else if let Some(rest) = url.strip_prefix("http://") { (false, rest) } else { return Err(format!("не ссылка: {url}")) };
+    let (secure, rest) = if let Some(rest) = url.strip_prefix("https://") { (true, rest) } else if let Some(rest) = url.strip_prefix("http://") { (false, rest) } else { return Err(format!("{} {url}", crate::tr("not a link:", "не ссылка:"))) };
     let (host_port, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
     let path = if path.is_empty() { "/" } else { path };
     let (host, port) = match host_port.rsplit_once(':') {
         Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) => (host, port.parse().unwrap_or(443)),
         _ => (host_port, if secure { 443 } else { 80 }),
     };
-    let fail = |what: &str| format!("сеть: {what} не удалось ({})", std::io::Error::last_os_error());
+    let fail = |what: &str| format!("{} {what}: {}", crate::tr("network:", "сеть:"), std::io::Error::last_os_error());
     unsafe {
         let session = Handle(WinHttpOpen(wide("glyphcast-glc").as_ptr(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, std::ptr::null(), std::ptr::null(), 0));
         if session.0.is_null() {
@@ -33,26 +33,26 @@ pub fn get(url: &str, mut each: impl FnMut(&[u8]) -> bool) -> Result<(), String>
         }
         let connection = Handle(WinHttpConnect(session.0, wide(host).as_ptr(), port, 0));
         if connection.0.is_null() {
-            return Err(fail("подключение"));
+            return Err(fail(crate::tr("connect", "подключение")));
         }
         let request = Handle(WinHttpOpenRequest(connection.0, wide("GET").as_ptr(), wide(path).as_ptr(), std::ptr::null(), std::ptr::null(), std::ptr::null(), if secure { WINHTTP_FLAG_SECURE } else { 0 }));
         if request.0.is_null() {
-            return Err(fail("запрос"));
+            return Err(fail(crate::tr("request", "запрос")));
         }
         if WinHttpSendRequest(request.0, std::ptr::null(), 0, std::ptr::null(), 0, 0, 0) == 0 || WinHttpReceiveResponse(request.0, std::ptr::null_mut()) == 0 {
-            return Err(fail("запрос"));
+            return Err(fail(crate::tr("request", "запрос")));
         }
         let mut status: u32 = 0;
         let mut size = 4u32;
         WinHttpQueryHeaders(request.0, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, std::ptr::null(), &mut status as *mut u32 as *mut _, &mut size, std::ptr::null_mut());
         if status >= 400 {
-            return Err(format!("сервер ответил {status}"));
+            return Err(format!("{} {status}", crate::tr("the server answered", "сервер ответил")));
         }
         let mut buffer = vec![0u8; 256 * 1024];
         loop {
             let mut read = 0u32;
             if WinHttpReadData(request.0, buffer.as_mut_ptr() as *mut _, buffer.len() as u32, &mut read) == 0 {
-                return Err(fail("загрузка"));
+                return Err(fail(crate::tr("download", "загрузка")));
             }
             if read == 0 || !each(&buffer[..read as usize]) {
                 return Ok(());

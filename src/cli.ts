@@ -113,7 +113,8 @@ const USAGE = `glyphcast: video as glyphs   (glc is the short name)
   glc micro <video>            tiny H.264 for GlyphVideo
   glc serve                    live streams for <glyph-player>
 
-  glc help <command> or glc <command> --help shows every option with examples.`;
+  glc help <command> or glc <command> --help shows every option with examples.
+  --lang ru switches the player and the hub list to Russian.`;
 
 const number = (name: string, value: string): number => {
   const parsed = Number(value);
@@ -162,10 +163,13 @@ const main = async (): Promise<void> => {
       start: { type: 'string' },
       duration: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
+      lang: { type: 'string' },
     },
   });
   // eslint-disable-next-line prefer-const
   let [command, input] = positionals;
+  // the terminal player and the hub list speak English unless asked for Russian
+  if (values.lang === 'ru') process.env['GLYPHCAST_LANG'] = 'ru';
   if (command === 'help' || (values.help && command)) {
     const topic = command === 'help' ? input : command;
     console.log((topic && HELP[topic]) ?? USAGE);
@@ -477,9 +481,10 @@ const pickVideo = (videos: readonly HubVideo[], start: string): Promise<{ video:
       if (at < top) top = at;
       if (at >= top + height) top = at - height + 1;
       let screen = '\x1b[H\x1b[2J';
-      screen += `\x1b[1m\x1b[38;2;240;160;75mgcast hub\x1b[0m   \x1b[2m↑↓ выбор · Enter смотреть · Esc выход · печатайте для поиска\x1b[0m\n`;
-      screen += `\x1b[38;2;154;160;168mПоиск:\x1b[0m ${query}\x1b[7m \x1b[0m\n\n`;
-      if (!list.length) screen += '\x1b[2mНичего не нашлось\x1b[0m\n';
+      const ru = process.env['GLYPHCAST_LANG'] === 'ru';
+      screen += `\x1b[1m\x1b[38;2;240;160;75mgcast hub\x1b[0m   \x1b[2m${ru ? '↑↓ выбор · Enter смотреть · Esc выход · печатайте для поиска' : '↑↓ choose · Enter watch · Esc quit · type to search'}\x1b[0m\n`;
+      screen += `\x1b[38;2;154;160;168m${ru ? 'Поиск:' : 'Search:'}\x1b[0m ${query}\x1b[7m \x1b[0m\n\n`;
+      if (!list.length) screen += `\x1b[2m${ru ? 'Ничего не нашлось' : 'Nothing found'}\x1b[0m\n`;
       const titleWidth = Math.max(20, width - 14);
       list.slice(top, top + height).forEach((video, index) => {
         const line = ` ${fit(video.title, titleWidth)}${clock(video.duration).padStart(9)} `;

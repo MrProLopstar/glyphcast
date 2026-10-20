@@ -1,9 +1,12 @@
 # Changelog
 
+## 1.3.1
+
+- The terminal player, the hub list and glc.exe speak English; `--lang ru` switches them to Russian (`glc --lang ru play …`, `glc.exe --lang ru`)
+
 ## 1.3.0
 
 - glc.exe does what `glc play` does: braille, glyph and half-block modes, glyph sets, colors, saturation, background, 2× sharpness, smooth in-between frames, auto levels, subtitles, J/L and 0–9 jumps, a clickable status bar, links and hub videos (`hub` opens the list, `hub:<id>` plays one). Still under 1 MB with nothing to install
-- The terminal player's status bar is in Russian
 - `glc play hub:…` plays the main file, which carries the sound
 
 ## 1.2.0

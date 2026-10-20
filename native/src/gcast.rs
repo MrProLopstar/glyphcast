@@ -93,11 +93,11 @@ impl Library {
 
 fn header(bytes: &[u8]) -> Result<Info, String> {
     if u32le(bytes, 0) != 0x5453_4347 {
-        return Err("это не файл .gcast".into());
+        return Err(crate::tr("not a .gcast file", "это не файл .gcast").into());
     }
     let version = bytes[4];
     if version != 6 {
-        return Err(format!("формат {version}: этот плеер читает файлы glyphcast 1.0 и новее (формат 6). Перекодируйте файл командой glc encode или в конвертере"));
+        return Err(if crate::russian() { format!("формат {version}: этот плеер читает файлы glyphcast 1.0 и новее (формат 6). Перекодируйте файл командой glc encode или в конвертере") } else { format!("format {version}: this player reads files of glyphcast 1.0 and later (format 6). Re-encode with glc encode or the converter") });
     }
     let flags = bytes[5];
     let info = Info {
@@ -109,7 +109,7 @@ fn header(bytes: &[u8]) -> Result<Info, String> {
         shades: flags & 128 != 0 && flags & 64 != 0,
     };
     if info.cols == 0 || info.rows == 0 || !(info.fps > 0.0) {
-        return Err("повреждён заголовок".into());
+        return Err(crate::tr("damaged header", "повреждён заголовок").into());
     }
     Ok(info)
 }
@@ -194,7 +194,7 @@ impl<'a> Bits<'a> {
         while self.direct() == 1 {
             k += 1;
             if k > 24 {
-                return Err("повреждённый фрагмент".into());
+                return Err(crate::tr("damaged chunk", "повреждённый фрагмент").into());
             }
         }
         let mut rest = 0i32;
@@ -255,7 +255,7 @@ fn steps(t: i32) -> [i32; 3] {
 pub fn decode_chunk(info: &Info, data: &[u8]) -> Result<Vec<Frame>, String> {
     let (mut frames, mut at, mut scale) = (0usize, 0usize, 1usize);
     loop {
-        let b = *data.get(at).ok_or("пустой фрагмент")? as usize;
+        let b = *data.get(at).ok_or(crate::tr("empty chunk", "пустой фрагмент"))? as usize;
         at += 1;
         frames += (b & 127) * scale;
         scale *= 128;
@@ -263,7 +263,7 @@ pub fn decode_chunk(info: &Info, data: &[u8]) -> Result<Vec<Frame>, String> {
             break;
         }
         if scale > 1 << 21 {
-            return Err("повреждённый фрагмент".into());
+            return Err(crate::tr("damaged chunk", "повреждённый фрагмент").into());
         }
     }
     let mut bits = Bits::new(&data[at..]);
@@ -306,7 +306,7 @@ pub fn decode_chunk(info: &Info, data: &[u8]) -> Result<Vec<Frame>, String> {
                 dx = pred[0] + bits.signed(C_MV)?;
                 dy = pred[1] + bits.signed(C_MV + 18)?;
                 if !(-64..64).contains(&dx) || !(-64..64).contains(&dy) {
-                    return Err("повреждённый фрагмент".into());
+                    return Err(crate::tr("damaged chunk", "повреждённый фрагмент").into());
                 }
             }
             vec_[b * 2] = dx;

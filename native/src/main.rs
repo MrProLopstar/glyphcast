@@ -17,7 +17,18 @@ use windows_sys::Win32::System::Console::*;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const HUB: &str = "https://glc-hub.1lop.ru";
-const GLYPH_NAMES: [&str; 6] = ["классика", "блоки", "плотные", "точки", "двоичные", "катакана"];
+const GLYPH_NAMES: [&str; 6] = ["classic", "blocks", "dense", "dots", "binary", "katakana"];
+const GLYPH_NAMES_RU: [&str; 6] = ["классика", "блоки", "плотные", "точки", "двоичные", "катакана"];
+
+static RUSSIAN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// English unless the exe was started with --lang ru.
+pub fn russian() -> bool {
+    RUSSIAN.load(std::sync::atomic::Ordering::Relaxed)
+}
+pub fn tr(en: &'static str, ru: &'static str) -> &'static str {
+    if russian() { ru } else { en }
+}
 
 // ---- console ----
 
@@ -144,11 +155,11 @@ fn load(location: String, library: Arc<Mutex<gcast::Library>>, stop: Arc<std::sy
                                     break Ok(());
                                 }
                             }
-                            Err(error) => break Err(format!("не читается файл: {error}")),
+                            Err(error) => break Err(format!("{} {error}", tr("cannot read the file:", "не читается файл:"))),
                         }
                     }
                 }
-                Err(error) => Err(format!("не открылся файл: {error}")),
+                Err(error) => Err(format!("{} {error}", tr("cannot open the file:", "не открылся файл:"))),
             }
         };
         let mut lib = library.lock().unwrap();
@@ -260,14 +271,14 @@ fn play(console: &Console, source: Source) -> Result<(), String> {
                 break gcast::Info { ..*info };
             }
             if lib.done {
-                return Err("файл пустой".into());
+                return Err(tr("the file is empty", "файл пустой").into());
             }
         }
         if started.elapsed() > Duration::from_secs(30) {
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
-            return Err("сервер долго не отвечает".into());
+            return Err(tr("the server does not answer", "сервер долго не отвечает").into());
         }
-        print!("\r⠿ загрузка: {}", source.title);
+        print!("\r⠿ {} {}", tr("loading", "загрузка:"), source.title);
         std::io::stdout().flush().ok();
         thread::sleep(Duration::from_millis(100));
     };
@@ -561,18 +572,18 @@ fn run(console: &Console, source: &Source, info: &gcast::Info, library: &Arc<Mut
         }
         // the status bar: pause, time, progress (click to seek) and the look, each a button
         let span = width;
-        let time_text = format!(" {} / {}{} ", clock(time), clock(duration), if waiting { " загрузка…" } else { "" });
+        let time_text = format!(" {} / {}{} ", clock(time), clock(duration), if waiting { tr(" loading…", " загрузка…") } else { "" });
         let mut options: Vec<(String, Option<bool>, Act)> = vec![
-            (MODES[look.mode].to_string(), None, Act::Mode),
-            (GLYPH_NAMES[look.glyphs].to_string(), None, Act::Glyphs),
-            (TINTS[look.tint].0.to_string(), None, Act::Tint),
-            (format!("насыщ. {:.1}", look.boost), None, Act::Boost),
-            (format!("фон {}", FILLS[look.fill]), None, Act::Fill),
-            ("чёткость".into(), Some(sharp), Act::Sharp),
-            ("плавность".into(), Some(smooth), Act::Smooth),
+            ((if russian() { render::MODES_RU[look.mode] } else { MODES[look.mode] }).to_string(), None, Act::Mode),
+            ((if russian() { GLYPH_NAMES_RU[look.glyphs] } else { GLYPH_NAMES[look.glyphs] }).to_string(), None, Act::Glyphs),
+            ((if russian() { render::TINTS_RU[look.tint] } else { TINTS[look.tint].0 }).to_string(), None, Act::Tint),
+            (format!("{} {:.1}", tr("sat", "насыщ."), look.boost), None, Act::Boost),
+            (format!("{} {}", tr("bg", "фон"), FILLS[look.fill]), None, Act::Fill),
+            (tr("2x", "чёткость").into(), Some(sharp), Act::Sharp),
+            (tr("smooth", "плавность").into(), Some(smooth), Act::Smooth),
         ];
         if !cues.is_empty() {
-            options.push(("субтитры".into(), Some(show_subs), Act::Subs));
+            options.push((tr("subs", "субтитры").into(), Some(show_subs), Act::Subs));
         }
         options.push(("✕".into(), None, Act::Quit));
         let width_of = |items: &[(String, Option<bool>, Act)]| items.iter().map(|(t, _, _)| t.chars().count() + 3).sum::<usize>();
@@ -634,9 +645,9 @@ struct HubVideo {
 }
 
 fn hub() -> Result<(String, Vec<HubVideo>), String> {
-    let config = net::parse(&net::text(&format!("{HUB}/hub.json"))?).ok_or("хаб ответил непонятно")?;
-    let files = config.get("files").and_then(|f| f.text()).ok_or("хаб ответил непонятно")?.trim_end_matches('/').to_string();
-    let list = net::parse(&net::text(&format!("{files}/videos"))?).ok_or("хаб ответил непонятно")?;
+    let config = net::parse(&net::text(&format!("{HUB}/hub.json"))?).ok_or(tr("the hub answered something unexpected", "хаб ответил непонятно"))?;
+    let files = config.get("files").and_then(|f| f.text()).ok_or(tr("the hub answered something unexpected", "хаб ответил непонятно"))?.trim_end_matches('/').to_string();
+    let list = net::parse(&net::text(&format!("{files}/videos"))?).ok_or(tr("the hub answered something unexpected", "хаб ответил непонятно"))?;
     let videos = list
         .list()
         .iter()
@@ -695,10 +706,10 @@ fn pick(console: &Console, videos: &[HubVideo]) -> Option<usize> {
             if at >= top + rows {
                 top = at + 1 - rows;
             }
-            let mut screen = String::from("\x1b[H\x1b[2J\x1b[1m\x1b[38;2;240;160;75mgcast hub\x1b[0m   \x1b[2m↑↓ выбор · Enter смотреть · Esc назад · печатайте для поиска\x1b[0m\n");
-            screen.push_str(&format!("\x1b[38;2;154;160;168mПоиск:\x1b[0m {query}\x1b[7m \x1b[0m\n\n"));
+            let mut screen = format!("\x1b[H\x1b[2J\x1b[1m\x1b[38;2;240;160;75mgcast hub\x1b[0m   \x1b[2m{}\x1b[0m\n", tr("↑↓ choose · Enter watch · Esc back · type to search", "↑↓ выбор · Enter смотреть · Esc назад · печатайте для поиска"));
+            screen.push_str(&format!("\x1b[38;2;154;160;168m{}\x1b[0m {query}\x1b[7m \x1b[0m\n\n", tr("Search:", "Поиск:")));
             if found.is_empty() {
-                screen.push_str("\x1b[2mНичего не нашлось\x1b[0m\n");
+                screen.push_str(&format!("\x1b[2m{}\x1b[0m\n", tr("Nothing found", "Ничего не нашлось")));
             }
             for (row, &i) in found.iter().enumerate().skip(top).take(rows) {
                 let line = format!(" {}{:>9} ", fit_text(&videos[i].title, width.saturating_sub(14).max(20)), clock(videos[i].duration));
@@ -746,10 +757,10 @@ fn pick(console: &Console, videos: &[HubVideo]) -> Option<usize> {
 
 
 fn hub_menu(console: &Console, start: Option<&str>) -> Result<(), String> {
-    println!("Загружаю список видео из хаба…");
+    println!("{}", tr("Loading the hub list…", "Загружаю список видео из хаба…"));
     let (files, videos) = hub()?;
     if let Some(name) = start {
-        let video = videos.iter().find(|v| v.slug == name || v.id == name).ok_or(format!("в хабе нет видео «{name}»"))?;
+        let video = videos.iter().find(|v| v.slug == name || v.id == name).ok_or(format!("{} «{name}»", tr("no such video in the hub:", "в хабе нет видео")))?;
         return play(console, hub_source(&files, video, console.size().0));
     }
     while let Some(i) = pick(console, &videos) {
@@ -776,17 +787,22 @@ fn open(console: &Console, what: &str) -> Result<(), String> {
     }
     let remote = what.starts_with("http://") || what.starts_with("https://");
     if !remote && !std::path::Path::new(what).exists() {
-        return Err("нет такого файла".into());
+        return Err(tr("no such file", "нет такого файла").into());
     }
     if !remote && !what.to_lowercase().ends_with(".gcast") {
-        return Err("этот плеер играет файлы .gcast. Видео переводится в .gcast прямо в браузере: https://gcast.1lop.ru".into());
+        return Err(tr("this player plays .gcast files. Turn a video into .gcast right in the browser: https://gcast.1lop.ru", "этот плеер играет файлы .gcast. Видео переводится в .gcast прямо в браузере: https://gcast.1lop.ru").into());
     }
     play(console, Source { picture: what.to_string(), sound: None, title: what.rsplit(['\\', '/']).next().unwrap_or(what).to_string(), subtitles: None })
 }
 
 fn main() {
     let console = Console::open();
-    let mut queue: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(at) = args.iter().position(|a| a == "--lang") {
+        RUSSIAN.store(args.get(at + 1).map(|l| l == "ru").unwrap_or(false), std::sync::atomic::Ordering::Relaxed);
+        args.drain(at..(at + 2).min(args.len()));
+    }
+    let mut queue = args;
     queue.reverse();
     let from_arguments = !queue.is_empty();
     loop {
@@ -796,8 +812,8 @@ fn main() {
                 if from_arguments {
                     // a file dropped onto the exe: after it the window offers the next one instead of closing
                 }
-                println!("\nglyphcast {VERSION} — видео символами в консоли");
-                println!("Перетащите сюда файл .gcast или вставьте ссылку и нажмите Enter. hub — видео из хаба, Enter без ввода — выход.");
+                println!("\nglyphcast {VERSION} — {}", tr("video as glyphs in the console", "видео символами в консоли"));
+                println!("{}", tr("Drag a .gcast file here or paste a link, then press Enter. hub opens the hub list, an empty Enter quits.", "Перетащите сюда файл .gcast или вставьте ссылку и нажмите Enter. hub — видео из хаба, Enter без ввода — выход."));
                 print!("> ");
                 std::io::stdout().flush().ok();
                 let mut line = String::new();

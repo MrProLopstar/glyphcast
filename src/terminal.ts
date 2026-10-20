@@ -237,9 +237,14 @@ const steady = (previous: Uint8ClampedArray | null, pixels: Uint8ClampedArray): 
   return out;
 };
 
-const MODES: readonly [string, TerminalMode][] = [['брайль', 'braille'], ['символы', 'glyphs'], ['полублоки', 'blocks']];
-const GLYPH_NAMES = ['классика', 'блоки', 'плотные', 'точки', 'двоичные', 'катакана'];
-const TINT_NAMES = ['как в видео', 'матрица', 'ламповый', 'неон', 'монохром'];
+const MODES: readonly TerminalMode[] = ['braille', 'glyphs', 'blocks'];
+
+/** Words of the player's status bar; English unless GLYPHCAST_LANG=ru (glc --lang ru). */
+const WORDS = {
+  en: { modes: ['braille', 'glyphs', 'half blocks'], glyphs: ['classic', 'blocks', 'dense', 'dots', 'binary', 'katakana'], tints: ['video colors', 'matrix', 'amber', 'neon', 'mono'], sat: 'sat', bg: 'bg', sharp: '2x', smooth: 'smooth', subs: 'subs', loading: 'loading' },
+  ru: { modes: ['брайль', 'символы', 'полублоки'], glyphs: ['классика', 'блоки', 'плотные', 'точки', 'двоичные', 'катакана'], tints: ['как в видео', 'матрица', 'ламповый', 'неон', 'монохром'], sat: 'насыщ.', bg: 'фон', sharp: 'чёткость', smooth: 'плавность', subs: 'субтитры', loading: 'загрузка' },
+};
+export const words = (): (typeof WORDS)['en'] => (process.env['GLYPHCAST_LANG'] === 'ru' ? WORDS.ru : WORDS.en);
 const BOOSTS = [1.3, 1.6, 2, 0.7, 1];
 
 interface Segment {
@@ -520,14 +525,14 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
   const total = (): number => (info.frameCount || library.pieces.reduce((sum, piece) => Math.max(sum, piece.start + piece.frames), 0)) / info.fps;
   const audio = sounds(library.audio, total, options.ffplay ?? 'ffplay');
   const view = screen(output);
-  output.write(`\x1b[${Math.max(1, Math.floor(view.height / 2))};${Math.max(1, Math.floor(view.width / 2) - 6)}H${SPINNER[0]} загрузка`);
+  output.write(`\x1b[${Math.max(1, Math.floor(view.height / 2))};${Math.max(1, Math.floor(view.width / 2) - 6)}H${SPINNER[0]} ${words().loading}`);
   if (output.isTTY) {
     const fitted = fitTerminal(info.cols, info.rows, 1000, 1000);
     const scale = Math.min((output.columns || 120) / fitted.width, ((output.rows || 40) - 1) / fitted.height);
     output.write(`\x1b[8;${Math.round(fitted.height * scale) + 1};${Math.round(fitted.width * scale)}t`);
   }
   const look = {
-    mode: Math.max(0, MODES.findIndex(([, mode]) => mode === (options.mode ?? 'braille'))),
+    mode: Math.max(0, MODES.indexOf(options.mode ?? 'braille')),
     glyphs: Math.max(0, GLYPH_SETS.findIndex(([, set]) => set === (options.glyphs ?? DEFAULT_GLYPHS))),
     tint: Math.max(0, TINTS.findIndex(([, tint]) => tint === (options.tint ?? null))),
     boost: options.boost ?? 1.3,
@@ -755,7 +760,7 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
           const text = ansiFrame(look.sharp ? upscale2x(shown$, info.cols, info.rows) : shown$, info.cols * (look.sharp ? 2 : 1), info.rows * (look.sharp ? 2 : 1), 4, levels, {
             width: view.width,
             height: view.height,
-            mode: MODES[look.mode]?.[1] ?? 'braille',
+            mode: MODES[look.mode] ?? 'braille',
             glyphs: GLYPH_SETS[look.glyphs]?.[1] ?? DEFAULT_GLYPHS,
             tint: TINTS[look.tint]?.[1] ?? null,
             boost: look.boost,
@@ -781,16 +786,16 @@ const playStream = async (input: string, options: TerminalOptions, output: NodeJ
       const span = pictureWidth >= 60 ? pictureWidth : view.width;
       const offset = pictureWidth >= 60 ? pictureLeft : 0;
       const pause: Segment = { text: playing ? '▌▌' : '▶ ', act: toggle };
-      const time$ = ` ${clock(time)} / ${clock(total())}${waiting ? ' загрузка…' : ''} `;
+      const time$ = ` ${clock(time)} / ${clock(total())}${waiting ? ` ${words().loading}…` : ''} `;
       const options$: Segment[] = [
-        { text: MODES[look.mode]?.[0] ?? '', act: () => (look.mode = (look.mode + 1) % MODES.length) },
-        { text: GLYPH_NAMES[look.glyphs] ?? '', act: () => (look.glyphs = (look.glyphs + 1) % GLYPH_SETS.length) },
-        { text: TINT_NAMES[look.tint] ?? '', act: () => (look.tint = (look.tint + 1) % TINTS.length) },
-        { text: `насыщ. ${look.boost.toFixed(1)}`, act: () => (look.boost = BOOSTS[(BOOSTS.indexOf(look.boost) + 1) % BOOSTS.length] ?? 1.3) },
-        { text: `фон ${FILLS[look.fill]}`, act: () => (look.fill = (look.fill + 1) % FILLS.length) },
-        { text: 'чёткость', on: look.sharp, act: () => (look.sharp = !look.sharp) },
-        { text: 'плавность', on: look.smooth, act: () => (look.smooth = !look.smooth) },
-        ...(cues.length ? [{ text: 'субтитры', on: showSubtitles, act: () => ((showSubtitles = !showSubtitles), (redraw = true)) }] : []),
+        { text: words().modes[look.mode] ?? '', act: () => (look.mode = (look.mode + 1) % MODES.length) },
+        { text: words().glyphs[look.glyphs] ?? '', act: () => (look.glyphs = (look.glyphs + 1) % GLYPH_SETS.length) },
+        { text: words().tints[look.tint] ?? '', act: () => (look.tint = (look.tint + 1) % TINTS.length) },
+        { text: `${words().sat} ${look.boost.toFixed(1)}`, act: () => (look.boost = BOOSTS[(BOOSTS.indexOf(look.boost) + 1) % BOOSTS.length] ?? 1.3) },
+        { text: `${words().bg} ${FILLS[look.fill]}`, act: () => (look.fill = (look.fill + 1) % FILLS.length) },
+        { text: words().sharp, on: look.sharp, act: () => (look.sharp = !look.sharp) },
+        { text: words().smooth, on: look.smooth, act: () => (look.smooth = !look.smooth) },
+        ...(cues.length ? [{ text: words().subs, on: showSubtitles, act: () => ((showSubtitles = !showSubtitles), (redraw = true)) }] : []),
         { text: '✕', act: () => (quit = true) },
       ];
       const widthOf = (segments: readonly Segment[]): number => segments.reduce((sum, segment) => sum + segment.text.length + 3, 0);

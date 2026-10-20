@@ -12,8 +12,10 @@ pub const GLYPH_SETS: [(&str, &str); 6] = [
     ("binary", " 01"),
     ("katakana", " ｰｨｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏ"),
 ];
-pub const TINTS: [(&str, Option<Rgb>); 5] = [("как в видео", None), ("матрица", Some([0x33, 0xff, 0x66])), ("ламповый", Some([0xff, 0xb3, 0x5c])), ("неон", Some([0x5c, 0xe1, 0xff])), ("монохром", Some([0xe8, 0xec, 0xef]))];
-pub const MODES: [&str; 3] = ["брайль", "символы", "полублоки"];
+pub const TINTS: [(&str, Option<Rgb>); 5] = [("video colors", None), ("matrix", Some([0x33, 0xff, 0x66])), ("amber", Some([0xff, 0xb3, 0x5c])), ("neon", Some([0x5c, 0xe1, 0xff])), ("mono", Some([0xe8, 0xec, 0xef]))];
+pub const TINTS_RU: [&str; 5] = ["как в видео", "матрица", "ламповый", "неон", "монохром"];
+pub const MODES: [&str; 3] = ["braille", "glyphs", "half blocks"];
+pub const MODES_RU: [&str; 3] = ["брайль", "символы", "полублоки"];
 pub const FILLS: [f64; 3] = [0.25, 0.5, 0.0];
 pub const BOOSTS: [f64; 5] = [1.3, 1.6, 2.0, 0.7, 1.0];
 

@@ -23,6 +23,6 @@ jobs:
         shell: bash
         run: |
           awk -v v="## ${TAG#v}" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
-          printf '\n---\n**glc.exe** plays `.gcast` files in the Windows console, with sound, and needs nothing installed (under 1 MB). Drop a file onto it, or start it and drag files into the window. Keys and modes as in `glc play`; type hub in its window for the hub list. It reads files made by glyphcast 1.0 and later.\n' >> notes.md
+          printf '\n---\n**glc.exe** plays `.gcast` files in the Windows console, with sound, and needs nothing installed (under 1 MB). Drop a file onto it, or start it and drag files into the window. Keys and modes as in `glc play`; type hub in its window for the hub list; `glc.exe --lang ru` speaks Russian. It reads files made by glyphcast 1.0 and later.\n' >> notes.md
       - shell: bash
         run: gh release create "$TAG" native/target/release/glc.exe --title "glyphcast $TAG" --notes-file notes.md
