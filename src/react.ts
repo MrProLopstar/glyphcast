@@ -5,6 +5,7 @@ import type { GlyphPlayer as Engine } from './player.js';
 
 export type { GlyphPlayerAttributes } from './attributes.js';
 
+/** Props of the React `<GlyphPlayer>`: the element's attributes plus event handlers. */
 export interface GlyphPlayerProps extends GlyphPlayerAttributes {
   readonly className?: string;
   readonly style?: CSSProperties;

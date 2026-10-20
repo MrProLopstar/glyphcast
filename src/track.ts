@@ -28,6 +28,7 @@ const pageLength = (bytes: Uint8Array, at: number): number => {
   return 27 + segments + body;
 };
 
+/** Embedded Ogg Opus sound played window by window with Web Audio, so long tracks start and seek at once. */
 export class OggTrack {
   private context: AudioContext | null = null;
   private gain: GainNode | null = null;

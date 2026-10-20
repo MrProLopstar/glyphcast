@@ -5,6 +5,7 @@ import { DEFAULT_GLYPHS, GlyphRenderer, type RenderMode } from './renderer.js';
 import { OggTrack } from './track.js';
 import { upscale2x } from './upscale.js';
 
+/** How frames are drawn: grid, mode, glyphs, colors and effects. */
 export interface LookOptions {
   /** Grid width in glyphs for video sources; `.gcast` streams carry their own grid. Default 160. */
   readonly cols?: number;
@@ -32,6 +33,7 @@ export interface LookOptions {
   readonly smooth?: boolean;
 }
 
+/** Everything `GlyphPlayer` takes: the look plus playback options. */
 export interface PlayerOptions extends LookOptions {
   /** Glyph height in device pixels. Default 16. */
   readonly glyphSize?: number;

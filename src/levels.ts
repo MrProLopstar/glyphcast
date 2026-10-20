@@ -1,8 +1,10 @@
+/** Brightness and contrast applied before glyphs are chosen. */
 export interface Levels {
   readonly brightness: number;
   readonly contrast: number;
 }
 
+/** Levels that change nothing. */
 export const NEUTRAL: Levels = { brightness: 0, contrast: 1 };
 
 /** Gamma that lifts dark tones when choosing glyphs and their brightness, so shadows keep detail. */

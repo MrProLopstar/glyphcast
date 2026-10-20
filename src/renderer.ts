@@ -1,5 +1,6 @@
 import { NEUTRAL, type Levels } from './levels.js';
 
+/** Glyphs from dark to bright used by default. */
 export const DEFAULT_GLYPHS = ' .:-=+*#%@';
 const EDGE_GLYPHS = '-/|\\';
 
@@ -7,6 +8,7 @@ const EDGE_GLYPHS = '-/|\\';
 export type RenderMode = 'glyphs' | 'braille' | 'halftone';
 const MODES: readonly RenderMode[] = ['glyphs', 'braille', 'halftone'];
 
+/** Settings of the WebGL2 renderer. */
 export interface RendererOptions {
   /** Glyphs from dark to bright. Default `' .:-=+*#%@'`. */
   readonly glyphs?: string;
@@ -18,6 +20,7 @@ export interface RendererOptions {
   readonly background?: string;
 }
 
+/** Per-frame drawing parameters of the renderer. */
 export interface FrameStyle {
   readonly levels?: Levels;
   /** Saturation multiplier. 1 keeps colors, 0 is grayscale. Default 1.3. */

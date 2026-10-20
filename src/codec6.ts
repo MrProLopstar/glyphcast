@@ -12,6 +12,7 @@
 
 /** Cells across and down a block. */
 export const BLOCK_W = 8;
+/** Cells down a block. */
 export const BLOCK_H = 4;
 /** Motion vectors are limited to this many dots either way. */
 const RANGE = 64;
@@ -24,12 +25,14 @@ const MASK_TOLERANCE = 6;
 /** Estimated bits per cell above which the encoder also tries vectors on a coarse grid, not only the neighbors'. */
 const COARSE = 2;
 
+/** A frame as planes: brightness per cell (0–63), color per 2×2 cells (0–31). */
 export interface Planes {
   y: Uint8Array;
   u: Uint8Array;
   v: Uint8Array;
 }
 
+/** Sizes derived from a grid: cells, half-resolution color planes and blocks. */
 export interface Shape {
   readonly cols: number;
   readonly rows: number;
@@ -39,11 +42,13 @@ export interface Shape {
   readonly blocks: number;
 }
 
+/** The sizes of a `cols × rows` grid. */
 export const shapeOf = (cols: number, rows: number): Shape => {
   const blocksX = Math.ceil(cols / BLOCK_W);
   return { cols, rows, halfCols: Math.ceil(cols / 2), halfRows: Math.ceil(rows / 2), blocksX, blocks: blocksX * Math.ceil(rows / BLOCK_H) };
 };
 
+/** Planes filled with black, or with mid gray when `gray`. */
 export const emptyPlanes = (shape: Shape, gray = false): Planes => ({
   y: new Uint8Array(shape.cols * shape.rows).fill(gray ? 32 : 0),
   u: new Uint8Array(shape.halfCols * shape.halfRows).fill(gray ? 16 : 0),

@@ -1,6 +1,8 @@
 import { decompress } from 'fzstd';
 import { decodeChunk6, Encoder6, toPixels, toPlanes } from './codec6.js';
+/** First four bytes of every `.gcast` stream. */
 export const MAGIC = 0x54534347;
+/** The oldest format version players read. */
 export const VERSION = 3;
 /** Detail streams with a second (dark side) color per patterned cell, written with `shades: true`, use version 4. */
 export const DETAIL_VERSION = 4;
@@ -11,6 +13,7 @@ export const ZSTD_VERSION = 5;
  * compressor, motion in dots, dot-level mask contexts. Encoders write only this version; players read 3 to 6.
  */
 export const CODEC_VERSION = 6;
+/** Bytes in a stream header. */
 export const HEADER_SIZE = 20;
 const CHUNK_HEAD = 6;
 const INDEX_FRAMES = 0xffff;
@@ -29,6 +32,7 @@ export interface IndexEntry {
   readonly frames: number;
 }
 
+/** What a stream header says: grid, frame rate, chunking, frame count, quantizer and flags. */
 export interface StreamInfo {
   readonly cols: number;
   readonly rows: number;
@@ -48,6 +52,7 @@ export interface StreamInfo {
   readonly version?: number;
 }
 
+/** How `Encoder` builds a stream. */
 export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshold' | 'zstd' | 'version'> {
   /** Brightness steps (of 63) a cell may drift before it is sent again. Higher means smaller streams. Default 3. */
   readonly threshold?: number;
@@ -59,6 +64,7 @@ export interface EncodeOptions extends Omit<StreamInfo, 'frameCount' | 'threshol
   readonly fast?: boolean;
 }
 
+/** A piece of a stream as `StreamReader` returns it: frames, sound or subtitles. */
 export interface Chunk {
   /** Index of the first frame in the chunk. */
   readonly start: number;
@@ -70,6 +76,7 @@ export interface Chunk {
   readonly subtitles?: boolean;
 }
 
+/** Errors of malformed streams and wrong arguments. */
 export class GlyphcastError extends Error {
   override readonly name = 'GlyphcastError';
 }
@@ -144,6 +151,7 @@ const pipe = async (data: Uint8Array, stream: CompressionStream | DecompressionS
   return new Uint8Array(await new Response(output).arrayBuffer());
 };
 
+/** Raw-deflate decompression, for format versions 3 and 4. */
 export const inflate = (data: Uint8Array): Promise<Uint8Array> => pipe(data, new DecompressionStream('deflate-raw'));
 
 const validate = ({ cols, rows, fps, chunkFrames, threshold }: Omit<StreamInfo, 'frameCount'>): void => {
@@ -281,6 +289,7 @@ const sceneCut = (now: ArrayLike<number>, before: ArrayLike<number>): boolean =>
   return change / count > Math.max(6, (level / count) * 0.3);
 };
 
+/** Builds a `.gcast` stream (format 6) from frames; see the details below. */
 export class Encoder {
   readonly info: StreamInfo;
   private readonly coder: Encoder6;

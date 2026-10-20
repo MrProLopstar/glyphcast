@@ -1,3 +1,14 @@
+/**
+ * `<glyph-player>`: a complete video player as a custom element, with controls, settings, subtitles, quality
+ * switching, picture-in-picture and fullscreen. Importing this module defines the element.
+ *
+ * ```html
+ * <script type="module">import 'glyphcast/element';</script>
+ * <glyph-player src="movie.gcast"></glyph-player>
+ * ```
+ *
+ * @module
+ */
 import { GlyphPlayer, sourceFor, type LookOptions, type Source } from './player.js';
 import { GLYPH_SETS, TINTS } from './looks.js';
 import type { RenderMode } from './renderer.js';

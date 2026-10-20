@@ -3,9 +3,10 @@
 //! drag files into the window, paste a link, or type hub to pick a video from the gcast hub.
 
 mod audio;
+mod banner;
 mod gcast;
 mod net;
-mod render;
+use glyphcast::render;
 
 use render::{Cell, Detail, Levels, Look, Rgb, BOOSTS, FILLS, GLYPH_SETS, MODES, TINTS};
 use std::collections::HashMap;
@@ -804,16 +805,18 @@ fn main() {
     }
     let mut queue = args;
     queue.reverse();
-    let from_arguments = !queue.is_empty();
+    let mut greeted = false;
     loop {
         let what = match queue.pop() {
             Some(item) => clean(&item),
             None => {
-                if from_arguments {
-                    // a file dropped onto the exe: after it the window offers the next one instead of closing
+                // the logo once; after each video only the prompt comes back
+                if !greeted {
+                    print!("\x1b[2J\x1b[H");
+                    banner::print(VERSION, tr("video as glyphs in the console", "видео символами в консоли"));
+                    greeted = true;
                 }
-                println!("\nglyphcast {VERSION} — {}", tr("video as glyphs in the console", "видео символами в консоли"));
-                println!("{}", tr("Drag a .gcast file here or paste a link, then press Enter. hub opens the hub list, an empty Enter quits.", "Перетащите сюда файл .gcast или вставьте ссылку и нажмите Enter. hub — видео из хаба, Enter без ввода — выход."));
+                println!("\n{}", tr("Drag a .gcast file here or paste a link, then press Enter. hub opens the hub list, an empty Enter quits.", "Перетащите сюда файл .gcast или вставьте ссылку и нажмите Enter. hub — видео из хаба, Enter без ввода — выход."));
                 print!("> ");
                 std::io::stdout().flush().ok();
                 let mut line = String::new();

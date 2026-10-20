@@ -1,0 +1,12 @@
+[package]
+name = "glc"
+version = "1.4.0"
+edition = "2021"
+description = "Plays .gcast videos in the Windows console: picture as colored braille, sound through waveOut"
+license = "MPL-2.0"
+
+[dependencies]
+glyphcast = { path = "../glyphcast", version = "1.0" }
+opus = "0.3"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Media", "Win32_Media_Audio", "Win32_Media_Multimedia", "Win32_System_Console", "Win32_Networking", "Win32_Networking_WinHttp"] }
+

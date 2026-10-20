@@ -1,3 +1,14 @@
+/**
+ * Node.js side of glyphcast: encode video files into `.gcast` with ffmpeg, extract sound and posters, make micro
+ * videos, and serve live streams.
+ *
+ * ```ts
+ * import { encodeVideo } from 'glyphcast/node';
+ * const bytes = await encodeVideo('movie.mp4', { cols: 180, detail: true });
+ * ```
+ *
+ * @module
+ */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,6 +16,7 @@ import { join } from 'node:path';
 import { detailMasks, Encoder, GlyphcastError } from './format.js';
 
 
+/** Options of `encodeVideo` and `encodeMicroVideo`. */
 export interface EncodeVideoOptions {
   /** Grid width in glyphs. Default 160. */
   readonly cols?: number;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+- Rust crate `glyphcast` (native/glyphcast): format 6 encoder and decoder, byte-identical to the JS library, no dependencies
+- glc.exe has an icon, file details and a logo at start
+- JSDoc for all public exports, module docs for `glyphcast/element` and `glyphcast/node`
+
 ## 1.3.1
 
 - The terminal player, the hub list and glc.exe speak English; `--lang ru` switches them to Russian (`glc --lang ru play …`, `glc.exe --lang ru`)

@@ -8,6 +8,7 @@ import { captionAt, parseCaptions } from './captions.js';
 import { DEFAULT_GLYPHS } from './renderer.js';
 import { upscale2x } from './upscale.js';
 
+/** Options of `playInTerminal`. */
 export interface TerminalOptions {
   /** Glyphs from dark to bright. Default `' .:-=+*#%@'`. */
   readonly glyphs?: string;
@@ -40,6 +41,7 @@ const channel = (value: number): number => Math.max(0, Math.min(255, Math.round(
 /** How the terminal draws a cell: a glyph, a 2×4 braille pattern, or two half blocks with their own colors. */
 export type TerminalMode = 'glyphs' | 'braille' | 'blocks';
 
+/** Options of `ansiFrame`. */
 export interface AnsiOptions {
   /** Glyphs from dark to bright. Default `' .:-=+*#%@'`. */
   readonly glyphs?: string;
@@ -244,6 +246,7 @@ const WORDS = {
   en: { modes: ['braille', 'glyphs', 'half blocks'], glyphs: ['classic', 'blocks', 'dense', 'dots', 'binary', 'katakana'], tints: ['video colors', 'matrix', 'amber', 'neon', 'mono'], sat: 'sat', bg: 'bg', sharp: '2x', smooth: 'smooth', subs: 'subs', loading: 'loading' },
   ru: { modes: ['брайль', 'символы', 'полублоки'], glyphs: ['классика', 'блоки', 'плотные', 'точки', 'двоичные', 'катакана'], tints: ['как в видео', 'матрица', 'ламповый', 'неон', 'монохром'], sat: 'насыщ.', bg: 'фон', sharp: 'чёткость', smooth: 'плавность', subs: 'субтитры', loading: 'загрузка' },
 };
+/** Words of the terminal player's status bar in the chosen language. */
 export const words = (): (typeof WORDS)['en'] => (process.env['GLYPHCAST_LANG'] === 'ru' ? WORDS.ru : WORDS.en);
 const BOOSTS = [1.3, 1.6, 2, 0.7, 1];
 

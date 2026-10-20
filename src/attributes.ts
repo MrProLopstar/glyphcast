@@ -45,8 +45,10 @@ const NAMES: Readonly<Record<keyof GlyphPlayerAttributes, string>> = {
   loop: 'loop',
 };
 
+/** Events the React and Vue wrappers forward from `<glyph-player>`. */
 export const PLAYER_EVENTS = ['play', 'pause', 'ended', 'timeupdate', 'error'] as const;
 
+/** Turns wrapper props into the element's attributes (camelCase to lowercase, booleans to strings). */
 export const attributesOf = (props: GlyphPlayerAttributes): Record<string, string> => {
   const out: Record<string, string> = {};
   for (const [key, name] of Object.entries(NAMES) as [keyof GlyphPlayerAttributes, string][]) {

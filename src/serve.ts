@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, resolve, sep } from 'node:path';
 import { Encoder, GlyphcastError } from './format.js';
 
+/** Options of `serve`, the local server of live streams. */
 export interface ServeOptions {
   /** Port to listen on. Default 8787. */
   readonly port?: number;
@@ -21,6 +22,7 @@ export interface ServeOptions {
   readonly onRequest?: (line: string) => void;
 }
 
+/** What `serve` reports about a video: title, size and length. */
 export interface VideoInfo {
   readonly title: string;
   readonly duration: number;

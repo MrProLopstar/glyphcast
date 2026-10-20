@@ -127,3 +127,7 @@ Uploads need a Google sign-in, on the site or with `glc login`; a new video open
 ## License
 
 Mozilla Public License 2.0 (see LICENSE and NOTICE): changes to glyphcast's own files stay open, your code around it can stay closed. Versions up to 0.20.13 were MIT, 0.21.0–0.21.3 Apache 2.0.
+
+## Rust
+
+The `glyphcast` crate in [native/glyphcast](native/glyphcast) encodes and decodes format 6 natively, byte-identical to this library.

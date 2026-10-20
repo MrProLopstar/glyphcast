@@ -1,3 +1,4 @@
+/** One subtitle: shown from `start` to `end` seconds. */
 export interface Cue {
   readonly start: number;
   readonly end: number;
