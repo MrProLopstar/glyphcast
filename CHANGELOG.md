@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.1
+
+- glc.exe: sound stops when you leave a video for the hub menu
+
 ## 1.5.0
 
 - `glc telnet movie.gcast`: anyone watches with `telnet host 2323`, each connection with its own player (no sound)

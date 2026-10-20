@@ -135,7 +135,22 @@ fn feed(pages: Vec<Page>, channels: usize, preskip: i64, commands: Receiver<Comm
     loop {
         // commands: a new start position resets the device and the decoder
         let wait = if playing { Duration::from_millis(10) } else { Duration::from_millis(50) };
-        if let Ok(command) = commands.recv_timeout(wait) {
+        let received = commands.recv_timeout(wait);
+        if let Err(std::sync::mpsc::RecvTimeoutError::Disconnected) = received {
+            // the player is gone (quit to the hub menu): silence the device and free it
+            unsafe {
+                device.store(0, Ordering::Release);
+                waveOutReset(handle);
+                for header in headers.iter_mut() {
+                    if header.dwFlags & WHDR_PREPARED != 0 {
+                        waveOutUnprepareHeader(handle, header.as_mut(), std::mem::size_of::<WAVEHDR>() as u32);
+                    }
+                }
+                waveOutClose(handle);
+            }
+            return;
+        }
+        if let Ok(command) = received {
             match command {
                 Command::Start(at) => unsafe {
                     waveOutReset(handle);

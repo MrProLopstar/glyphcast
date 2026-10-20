@@ -5,6 +5,7 @@
 [![crates.io](https://img.shields.io/crates/v/glyphcast?color=f0a04b)](https://crates.io/crates/glyphcast)
 [![glc.exe](https://img.shields.io/github/v/release/MrProLopstar/glyphcast?label=glc.exe&color=f0a04b)](https://github.com/MrProLopstar/glyphcast/releases/latest)
 [![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue)](LICENSE)
+
 [Русская версия](README.ru.md) · [Playground](https://glc.1lop.ru/) · [Converter](https://gcast.1lop.ru/) · [Hub](https://glc-hub.1lop.ru/)
 
 ![One Piece opening in braille mode](https://glc.1lop.ru/preview.jpg)
